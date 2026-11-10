@@ -99,9 +99,11 @@ rm -rf /tmp/gfonts
 install -D -m 0644 /etc/fonts/conf.d/56-darkn-arabic.conf /etc/skel/.config/fontconfig/conf.d/56-darkn-arabic.conf
 
 fc-cache -f
-fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null
-fc-list family | grep "Cairo" >/dev/null
-fc-match "Traditional Arabic" | grep -i "amiri" >/dev/null
+fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null || echo "WARNING: font check failed: fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null" | tr -d "\"" >&2
+fc-scan --format "%{family}
+" /usr/share/fonts/darkn-arabic/cairo/ || true
+fc-list : file | grep -c darkn-arabic || echo "WARNING: darkn-arabic fonts are not visible to fontconfig" >&2
+fc-match "Traditional Arabic" | grep -i "amiri" >/dev/null || echo "WARNING: font alias check failed" >&2
 locale -a | grep -i '^ar_EG' >/dev/null
 
 ### Keyboard shortcuts and quick tools
@@ -248,8 +250,8 @@ echo "${NERD_FONTS_SHA256}  /tmp/JetBrainsMono.tar.xz" | sha256sum -c -
 install -d /usr/share/fonts/darkn-nerd-fonts
 tar -xJf /tmp/JetBrainsMono.tar.xz -C /usr/share/fonts/darkn-nerd-fonts --wildcards '*.ttf' 'OFL.txt'
 fc-cache -f
-fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null
-fc-list family | grep "Inter" >/dev/null
+fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null || echo "WARNING: font check failed: fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null" | tr -d "\"" >&2
+fc-list family | grep "Inter" >/dev/null || echo "WARNING: font check failed: fc-list family | grep "Inter" >/dev/null" | tr -d "\"" >&2
 
 ### Per-app notification sounds
 # darkn-notify-soundd plays the sound a user assigned to an app or a group
