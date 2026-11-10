@@ -46,12 +46,16 @@ dnf5 install -y \
     fuse-libs \
     plasma-smart-video-wallpaper-reborn \
     wl-clipboard \
-    dotool \
     gtk-layer-shell \
     yakuake \
     tesseract \
     tesseract-langpack-eng \
     tesseract-langpack-ara
+
+# dotool's install script reloads udev, which cannot work inside an image
+# build, so install it without running scripts. Its udev rule is a plain file.
+dnf5 install -y --setopt=tsflags=noscripts dotool
+command -v dotool
 
 ### Arabic language support
 # Locale, spell checking and a full set of Arabic fonts: Noto for the
