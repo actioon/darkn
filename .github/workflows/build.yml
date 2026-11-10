@@ -1,17 +1,22 @@
 ---
 name: Build container image
 on:
-  pull_request:
-    branches:
-      - main
-  schedule:
-    - cron: '05 10 * * *'  # 10:05am UTC everyday
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**/README.md'
+  # Darkn OS is still being set up, so builds only run when started by hand:
+  #   gh workflow run build.yml
   workflow_dispatch:
+  # TODO: once the setup is finished, turn the automatic builds back on.
+  # The scheduled build is what pulls in Aurora's security updates.
+  #
+  # schedule:
+  #   - cron: '05 10 * * *'  # 10:05am UTC everyday
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - '**/README.md'
+  # pull_request:
+  #   branches:
+  #     - main
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit

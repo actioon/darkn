@@ -1,0 +1,4 @@
+# Look up cosign signatures for Darkn OS images (see /etc/containers/policy.json).
+docker:
+  ghcr.io/actioon/darkn:
+    use-sigstore-attachments: true

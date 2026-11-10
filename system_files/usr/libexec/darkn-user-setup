@@ -88,14 +88,26 @@ step_flutter() {
 step_t3code() {
     local app_dir="${HOME}/Applications"
     local app="${app_dir}/T3-Code.AppImage"
-    local url tmp
-    url="$(curl -fsSL https://api.github.com/repos/pingdotgg/t3code/releases/latest |
-        jq -r '.assets[] | select(.name | test("x86_64\\.AppImage$")) | .browser_download_url' | head -n1)"
-    [[ -n "$url" && "$url" != "null" ]] || { log "no T3 Code AppImage found in the latest release"; return 1; }
+    local base="https://github.com/pingdotgg/t3code/releases/latest/download"
+    local manifest file expected actual tmp
+
+    # The release manifest names the x86_64 AppImage and its SHA-512.
+    manifest="$(curl -fsSL "${base}/latest-linux.yml")" || return 1
+    file="$(awk '/^path:/ {print $2; exit}' <<<"$manifest")"
+    expected="$(awk '/^sha512:/ {print $2; exit}' <<<"$manifest")"
+    [[ "$file" == *.AppImage && -n "$expected" ]] || { log "unexpected T3 Code release manifest"; return 1; }
 
     mkdir -p "$app_dir" "${HOME}/.local/share/applications" "${HOME}/.local/share/icons"
     tmp="$(mktemp "${app_dir}/.t3code.XXXXXX")"
-    if ! curl -fL --retry 3 -o "$tmp" "$url"; then
+    if ! curl -fL --retry 3 -o "$tmp" "${base}/${file}"; then
+        rm -f "$tmp"
+        return 1
+    fi
+
+    # Refuse to install a download that does not match the published checksum.
+    actual="$(openssl dgst -sha512 -binary "$tmp" | base64 -w0)"
+    if [[ "$actual" != "$expected" ]]; then
+        log "T3 Code checksum mismatch; download discarded"
         rm -f "$tmp"
         return 1
     fi

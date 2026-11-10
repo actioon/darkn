@@ -40,6 +40,12 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
+# Equalizer, microphone noise removal, compressor and limiter for PipeWire
+# (the open-source counterpart of Equalizer APO and NVIDIA Broadcast audio).
+[Flatpak Preinstall com.github.wwmm.easyeffects]
+Branch=stable
+IsRuntime=false
+
 [Flatpak Preinstall org.audacityteam.Audacity]
 Branch=stable
 IsRuntime=false
@@ -58,14 +64,5 @@ Branch=stable
 IsRuntime=false
 
 [Flatpak Preinstall net.poedit.Poedit]
-Branch=stable
-IsRuntime=false
-
-# --- Gaming ---
-[Flatpak Preinstall com.valvesoftware.Steam]
-Branch=stable
-IsRuntime=false
-
-[Flatpak Preinstall com.heroicgameslauncher.hgl]
 Branch=stable
 IsRuntime=false

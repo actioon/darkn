@@ -2,6 +2,7 @@
 FROM scratch AS ctx
 COPY build_files /
 COPY system_files /system_files
+COPY cosign.pub /cosign.pub
 
 # Base Image
 # Aurora Developer Experience with the NVIDIA open driver (RTX 3080):

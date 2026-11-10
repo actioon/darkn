@@ -47,6 +47,18 @@ for tool in node npm npx; do
     fi
 done
 
+### Image signature policy
+# Only accept Darkn OS images that are signed with our cosign key, the same
+# way Aurora verifies its own images.
+install -D -m 0644 /ctx/cosign.pub /usr/lib/pki/containers/darkn.pub
+jq '.transports.docker["ghcr.io/actioon/darkn"] = [{
+        "type": "sigstoreSigned",
+        "keyPath": "/usr/lib/pki/containers/darkn.pub",
+        "signedIdentity": {"type": "matchRepository"}
+    }]' /etc/containers/policy.json >/tmp/policy.json
+install -m 0644 /tmp/policy.json /etc/containers/policy.json
+jq -e '.transports.docker["ghcr.io/actioon/darkn"][0].type == "sigstoreSigned"' /etc/containers/policy.json
+
 ### Services
 systemctl enable podman.socket
 systemctl enable darkn-groups.service
@@ -58,7 +70,7 @@ npm --version
 pnpm --version
 java -version
 javac -version
-dotnet --version
+DOTNET_CLI_HOME=/tmp DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet --list-sdks
 gcc --version
 g++ --version
 cmake --version
