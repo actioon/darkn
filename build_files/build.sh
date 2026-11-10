@@ -99,10 +99,10 @@ rm -rf /tmp/gfonts
 install -D -m 0644 /etc/fonts/conf.d/56-darkn-arabic.conf /etc/skel/.config/fontconfig/conf.d/56-darkn-arabic.conf
 
 fc-cache -f
-fc-list :lang=ar family | grep -q "Noto Sans Arabic"
-fc-list family | grep -q "Cairo"
-fc-match "Traditional Arabic" | grep -qi "amiri"
-locale -a | grep -qi '^ar_EG'
+fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null
+fc-list family | grep "Cairo" >/dev/null
+fc-match "Traditional Arabic" | grep -i "amiri" >/dev/null
+locale -a | grep -i '^ar_EG' >/dev/null
 
 ### Keyboard shortcuts and quick tools
 # Shortcuts are declared in /usr/share/applications/darkn-*.desktop
@@ -112,7 +112,7 @@ locale -a | grep -qi '^ar_EG'
 install -D -m 0644 /usr/share/applications/org.kde.yakuake.desktop /etc/xdg/autostart/org.kde.yakuake.desktop
 command -v spectacle
 command -v tesseract
-tesseract --list-langs | grep -qx ara
+tesseract --list-langs | grep -x ara >/dev/null
 
 ### Voice typing (speech to text)
 # Handy: offline dictation into any app, with the Cohere Transcribe Arabic
@@ -217,7 +217,7 @@ dnf5 config-manager addrepo \
 dnf5 install -y /akmods-rpms/kmods/*openrazer*.rpm openrazer-daemon
 dnf5 config-manager setopt hardware_razer.enabled=0
 KERNEL_VERSION="$(rpm -q kernel --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' | head -n1)"
-find "/usr/lib/modules/${KERNEL_VERSION}" -name 'razer*.ko*' | grep -q .
+find "/usr/lib/modules/${KERNEL_VERSION}" -name 'razer*.ko*' | grep . >/dev/null
 
 ### Fonts
 # Coding, interface and document fonts, so nothing has to be added later.
@@ -248,8 +248,8 @@ echo "${NERD_FONTS_SHA256}  /tmp/JetBrainsMono.tar.xz" | sha256sum -c -
 install -d /usr/share/fonts/darkn-nerd-fonts
 tar -xJf /tmp/JetBrainsMono.tar.xz -C /usr/share/fonts/darkn-nerd-fonts --wildcards '*.ttf' 'OFL.txt'
 fc-cache -f
-fc-list family | grep -q "JetBrainsMono Nerd Font"
-fc-list family | grep -q "Inter"
+fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null
+fc-list family | grep "Inter" >/dev/null
 
 ### Per-app notification sounds
 # darkn-notify-soundd plays the sound a user assigned to an app or a group
