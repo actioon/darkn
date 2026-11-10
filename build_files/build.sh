@@ -6,7 +6,7 @@ set -ouex pipefail
 cp -af "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
-chmod 0755 /usr/libexec/darkn-installer /usr/bin/darkn-welcome /usr/libexec/darkn-backup \n    /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
+chmod 0755 /usr/libexec/darkn-installer /usr/bin/darkn-welcome /usr/libexec/darkn-backup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
     /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick \
     /usr/libexec/darkn-unzip-ar /usr/libexec/darkn-mount-ntfs /usr/libexec/darkn-update-notify
 # darkn-setup reopens the setup wizard; darkn-backup is the backup tool.
