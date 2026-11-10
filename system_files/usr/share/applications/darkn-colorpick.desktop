@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pick Color from Screen
+Name[ar]=التقاط لون من الشاشة
+Exec=/usr/libexec/darkn-colorpick
+Icon=color-picker
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+P

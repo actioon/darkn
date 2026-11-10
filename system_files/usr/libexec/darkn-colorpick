@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Darkn OS: pick a color from anywhere on screen and copy its hex code.
+
+set -uo pipefail
+
+# KWin returns the picked color as "(u) <AARRGGBB as a decimal number>".
+reply="$(busctl --user call org.kde.KWin /ColorPicker org.kde.kwin.ColorPicker pick 2>/dev/null)" || exit 0
+value="${reply##* }"
+[[ "$value" =~ ^[0-9]+$ ]] || exit 0
+
+hex="$(printf '#%06X' $((value & 0xFFFFFF)))"
+printf '%s' "$hex" | wl-copy
+notify-send --app-name="Darkn OS" --icon=color-picker "Color copied" "$hex"

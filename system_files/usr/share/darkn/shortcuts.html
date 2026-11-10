@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>اختصارات Darkn OS</title>
+<style>
+  :root {
+    --bg: #0e0f13;
+    --panel: #16181f;
+    --panel-2: #1c1f28;
+    --line: #2a2e3a;
+    --text: #e8eaf0;
+    --muted: #9097a8;
+    --accent: #8b7cf6;
+    --accent-soft: rgba(139, 124, 246, 0.14);
+    --key-bg: #232733;
+    --key-edge: #0a0b0e;
+    --kde: #5d6577;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f8;
+      --panel: #ffffff;
+      --panel-2: #f0f1f5;
+      --line: #dfe2ea;
+      --text: #1a1c23;
+      --muted: #626a7c;
+      --accent: #5b47e0;
+      --accent-soft: rgba(91, 71, 224, 0.1);
+      --key-bg: #ffffff;
+      --key-edge: #c5c9d6;
+      --kde: #8a91a3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans Arabic", "Noto Sans", "Segoe UI", Tahoma, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 16px 64px; }
+  header h1 { margin: 0 0 6px; font-size: 2rem; letter-spacing: -0.01em; }
+  header h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); max-width: 62ch; }
+  .tools {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin: 24px -16px 8px; padding: 12px 16px;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  #q {
+    flex: 1 1 240px; min-width: 0;
+    padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    font: inherit;
+  }
+  #q:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip {
+    padding: 8px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    font: inherit; font-size: 0.9rem;
+  }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  section { margin-top: 32px; }
+  section h2 {
+    margin: 0 0 12px; font-size: 1.1rem; font-weight: 600;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  section h2 small { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+  .list { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
+  .row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; align-items: center;
+    padding: 12px 16px; border-top: 1px solid var(--line);
+  }
+  .row:first-child { border-top: 0; }
+  .row:hover { background: var(--panel-2); }
+  .what { min-width: 0; }
+  .what b { font-weight: 600; }
+  .what .note { display: block; color: var(--muted); font-size: 0.87rem; }
+  .tag {
+    display: inline-block; margin-inline-start: 8px; padding: 1px 8px; border-radius: 999px;
+    font-size: 0.72rem; vertical-align: middle;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .keys { direction: ltr; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+  .keys .or { color: var(--muted); font-size: 0.8rem; margin: 0 2px; }
+  kbd {
+    display: inline-block; min-width: 2em; padding: 3px 9px; text-align: center;
+    font-family: "JetBrains Mono", "Cascadia Mono", "Noto Sans Mono", ui-monospace, monospace;
+    font-size: 0.86rem; line-height: 1.5; color: var(--text);
+    background: var(--key-bg); border: 1px solid var(--line);
+    border-bottom: 3px solid var(--key-edge); border-radius: 7px;
+  }
+  .plus { color: var(--muted); font-size: 0.8rem; }
+  .empty { display: none; margin-top: 40px; text-align: center; color: var(--muted); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.87rem; }
+  footer code { direction: ltr; unicode-bidi: isolate; background: var(--panel); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); }
+  @media (max-width: 620px) {
+    .row { grid-template-columns: 1fr; }
+    .keys { justify-content: flex-start; }
+    header h1 { font-size: 1.6rem; }
+  }
+  @media print {
+    .tools { display: none; }
+    body { background: #fff; color: #000; }
+    .list, kbd { border-color: #999; }
+    section { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>اختصارات <span>Darkn OS</span></h1>
+    <p>كل اختصارات الكيبورد في النظام. زرار <strong>Win</strong> هو زرار Windows في الكيبورد، وبيتسمى Meta في إعدادات KDE. الاختصارات اللي عليها علامة Darkn مضافة أو معدّلة علشان تبقى زي Windows.</p>
+  </header>
+
+  <div class="tools">
+    <input id="q" type="search" placeholder="دوّر على اختصار أو برنامج…" aria-label="بحث في الاختصارات">
+    <button class="chip" id="onlyDarkn" aria-pressed="false">إضافات Darkn بس</button>
+  </div>
+
+  <main id="out"></main>
+  <p class="empty" id="empty">مفيش اختصار مطابق للبحث.</p>
+
+  <footer>
+    <p>تغيير أي اختصار: <b>الإعدادات ← لوحة المفاتيح ← الاختصارات</b>. الصفحة دي بتتفتح في أي وقت بـ <kbd>Win</kbd> <span class="plus">+</span> <kbd>F1</kbd>.</p>
+    <p>ملف الصفحة على النظام: <code>/usr/share/darkn/shortcuts.html</code></p>
+  </footer>
+</div>
+
+<script>
+// d: 1 = added or changed by Darkn OS, 0 = KDE default.
+// k: one or more alternatives, each a list of keys.
+const DATA = [
+  { title: "فتح البرامج", hint: "Win + Shift + حرف", items: [
+    { t: "VS Code", k: [["Win","Shift","V"]], d: 1 },
+    { t: "T3 Code", k: [["Win","Shift","3"]], d: 1 },
+    { t: "Claude", k: [["Win","Shift","C"]], d: 1 },
+    { t: "ChatGPT", k: [["Win","Shift","G"]], d: 1 },
+    { t: "Telegram", k: [["Win","Shift","T"]], d: 1 },
+    { t: "Discord", k: [["Win","Shift","D"]], d: 1 },
+    { t: "WhatsApp", n: "بيفتح ZapZap", k: [["Win","Shift","W"]], d: 1 },
+    { t: "Obsidian", k: [["Win","Shift","O"]], d: 1 },
+    { t: "الترمنال", n: "Konsole", k: [["Ctrl","Alt","T"]], d: 0 },
+    { t: "مدير الملفات", n: "Dolphin", k: [["Win","E"]], d: 0 },
+    { t: "برامج الـ taskbar بالترتيب", n: "أول برنامج مثبّت، التاني، وهكذا", k: [["Win","1 … 9"]], d: 0 },
+  ]},
+  { title: "أدوات سريعة", items: [
+    { t: "الكتابة بالصوت", n: "دوسة تبدأ التسجيل ودوسة توقفه، والكلام يتكتب مكان المؤشر (Handy)", k: [["Win","H"]], d: 1 },
+    { t: "ترمنال منسدل", n: "بينزل من أعلى الشاشة فوق أي برنامج (Yakuake)", k: [["F12"]], d: 1 },
+    { t: "نسخ نص من الشاشة (OCR)", n: "حدد جزء من الشاشة، والنص العربي أو الإنجليزي يتنسخ", k: [["Win","Shift","X"]], d: 1 },
+    { t: "قطّارة ألوان", n: "دوس على أي نقطة في الشاشة وكود اللون (hex) يتنسخ", k: [["Win","Shift","P"]], d: 1 },
+    { t: "سجل الحافظة", n: "كل اللي نسخته قبل كده", k: [["Win","V"]], d: 0 },
+    { t: "الإيموجي", k: [["Win","."]], d: 0 },
+    { t: "صفحة الاختصارات دي", k: [["Win","F1"]], d: 1 },
+  ]},
+  { title: "لقطات وتسجيل الشاشة", hint: "Spectacle", items: [
+    { t: "أداة السكرينشوت", n: "تختار منطقة أو نافذة أو الشاشة كلها", k: [["Win","Shift","S"],["PrtSc"]], d: 0 },
+    { t: "سكرينشوت لمنطقة محددة", k: [["Win","Shift","PrtSc"]], d: 0 },
+    { t: "سكرينشوت للشاشة كلها", k: [["Shift","PrtSc"]], d: 0 },
+    { t: "سكرينشوت للنافذة الحالية", k: [["Win","PrtSc"]], d: 0 },
+    { t: "تسجيل فيديو لمنطقة", n: "نفس الاختصار بيوقف التسجيل", k: [["Win","Shift","R"]], d: 0 },
+    { t: "تسجيل فيديو للشاشة كلها", k: [["Win","Alt","R"]], d: 0 },
+    { t: "تسجيل فيديو لنافذة", k: [["Win","Ctrl","R"]], d: 0 },
+  ]},
+  { title: "النوافذ", items: [
+    { t: "النافذة على نص الشاشة", k: [["Win","←"],["Win","→"]], d: 0 },
+    { t: "تكبير النافذة", k: [["Win","↑"]], d: 1 },
+    { t: "تصغير النافذة للـ taskbar", k: [["Win","↓"]], d: 1 },
+    { t: "نقل النافذة للشاشة التانية", k: [["Win","Shift","←"],["Win","Shift","→"]], d: 0 },
+    { t: "التنقل بين النوافذ", k: [["Alt","Tab"]], d: 0 },
+    { t: "عرض كل النوافذ المفتوحة", k: [["Win","Tab"],["Win","W"]], d: 1 },
+    { t: "إظهار سطح المكتب", k: [["Win","D"]], d: 0 },
+    { t: "إغلاق النافذة", k: [["Alt","F4"]], d: 0 },
+    { t: "إجبار برنامج معلّق على الإغلاق", n: "دوس وبعدين اختار النافذة بالماوس", k: [["Win","Ctrl","Esc"]], d: 0 },
+    { t: "تعديل تقسيمات الشاشة", n: "ارسم تقسيمتك (مثلًا تلتين وتلت) زي FancyZones", k: [["Win","T"]], d: 0 },
+    { t: "وضع نافذة في تقسيمة", n: "اسحب النافذة بالماوس وانت دايس Shift", k: [["Shift","سحب"]], d: 0 },
+  ]},
+  { title: "النظام", items: [
+    { t: "قائمة البرامج والبحث", k: [["Win"]], d: 0 },
+    { t: "تشغيل / بحث سريع", n: "KRunner: برامج، ملفات، حسابات، أوامر", k: [["Win","R"],["Alt","Space"]], d: 1 },
+    { t: "الإعدادات", k: [["Win","I"]], d: 1 },
+    { t: "مدير المهام", n: "Mission Center", k: [["Ctrl","Shift","Esc"]], d: 1 },
+    { t: "قفل الشاشة", k: [["Win","L"]], d: 0 },
+    { t: "قائمة الخروج وإيقاف التشغيل", k: [["Ctrl","Alt","Del"]], d: 0 },
+    { t: "وضع الشاشات", n: "تكرار، امتداد، شاشة واحدة", k: [["Win","P"]], d: 0 },
+    { t: "تكبير وتصغير الشاشة (Zoom)", k: [["Win","="],["Win","-"]], d: 0 },
+  ]},
+  { title: "اللغة", items: [
+    { t: "تبديل عربي / إنجليزي", k: [["Alt","Shift"],["Win","Space"]], d: 1 },
+  ]},
+];
+
+const out = document.getElementById("out");
+const q = document.getElementById("q");
+const only = document.getElementById("onlyDarkn");
+const empty = document.getElementById("empty");
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function render() {
+  const term = q.value.trim().toLowerCase();
+  const darknOnly = only.getAttribute("aria-pressed") === "true";
+  out.textContent = "";
+  let shown = 0;
+  for (const group of DATA) {
+    const items = group.items.filter(i => {
+      if (darknOnly && !i.d) return false;
+      if (!term) return true;
+      const hay = [i.t, i.n || "", group.title, i.k.flat().join(" ")].join(" ").toLowerCase();
+      return hay.includes(term);
+    });
+    if (!items.length) continue;
+    shown += items.length;
+    const sec = el("section");
+    const h = el("h2", null, group.title);
+    if (group.hint) h.appendChild(el("small", null, group.hint));
+    sec.appendChild(h);
+    const list = el("div", "list");
+    for (const i of items) {
+      const row = el("div", "row");
+      const what = el("div", "what");
+      what.appendChild(el("b", null, i.t));
+      if (i.d) what.appendChild(el("span", "tag", "Darkn"));
+      if (i.n) what.appendChild(el("span", "note", i.n));
+      const keys = el("div", "keys");
+      i.k.forEach((combo, ci) => {
+        if (ci) keys.appendChild(el("span", "or", "أو"));
+        combo.forEach((key, ki) => {
+          if (ki) keys.appendChild(el("span", "plus", "+"));
+          keys.appendChild(el("kbd", null, key));
+        });
+      });
+      row.append(what, keys);
+      list.appendChild(row);
+    }
+    sec.appendChild(list);
+    out.appendChild(sec);
+  }
+  empty.style.display = shown ? "none" : "block";
+}
+
+q.addEventListener("input", render);
+only.addEventListener("click", () => {
+  only.setAttribute("aria-pressed", only.getAttribute("aria-pressed") === "true" ? "false" : "true");
+  render();
+});
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open VS Code
+Name[ar]=فتح VS Code
+Exec=/usr/libexec/darkn-launch code
+Icon=code
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+V

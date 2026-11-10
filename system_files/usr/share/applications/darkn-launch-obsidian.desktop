@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open Obsidian
+Name[ar]=فتح Obsidian
+Exec=/usr/libexec/darkn-launch obsidian
+Icon=md.obsidian.Obsidian
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+O

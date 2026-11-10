@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Darkn OS: start an app from a global keyboard shortcut.
+# Shortcuts are defined by the darkn-launch-*.desktop files in
+# /usr/share/applications (X-KDE-Shortcuts). Apps installed per user
+# (Homebrew, AppImages) are not on the session PATH, so add them here.
+
+export PATH="${HOME}/.local/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}"
+
+missing() {
+    notify-send --app-name="Darkn OS" --icon=dialog-information \
+        "$1 is not installed yet" "It is installed automatically once the machine has been online. Check: darkn-setup --status" 2>/dev/null
+    exit 1
+}
+
+flatpak_app() {
+    flatpak info "$1" >/dev/null 2>&1 || missing "$2"
+    exec flatpak run "$1"
+}
+
+native_app() {
+    command -v "$1" >/dev/null 2>&1 || missing "$2"
+    exec "$1"
+}
+
+case "${1:-}" in
+    code)        native_app code "VS Code" ;;
+    claude)      native_app claude-desktop "Claude" ;;
+    chatgpt)     native_app chatgpt "ChatGPT" ;;
+    t3code)
+        app="${HOME}/Applications/T3-Code.AppImage"
+        [[ -x "$app" ]] || missing "T3 Code"
+        exec "$app"
+        ;;
+    telegram)    flatpak_app org.telegram.desktop "Telegram" ;;
+    discord)     flatpak_app com.discordapp.Discord "Discord" ;;
+    whatsapp)    flatpak_app com.rtosta.zapzap "WhatsApp (ZapZap)" ;;
+    obsidian)    flatpak_app md.obsidian.Obsidian "Obsidian" ;;
+    taskmanager) flatpak_app io.missioncenter.MissionCenter "Mission Center" ;;
+    settings)    native_app systemsettings "System Settings" ;;
+    shortcuts)   exec xdg-open /usr/share/darkn/shortcuts.html ;;
+    *)
+        echo "usage: darkn-launch <app>" >&2
+        exit 2
+        ;;
+esac

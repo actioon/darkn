@@ -1,0 +1,22 @@
+[KDE Keyboard Layout Switcher]
+Switch to Next Keyboard Layout=Meta+Space\tMeta+Alt+K,Meta+Alt+K,Switch to Next Keyboard Layout
+_k_friendly_name=Keyboard Layout Switcher
+
+[kwin]
+Overview=Meta+Tab\tMeta+W,Meta+W,Toggle Overview
+Window Maximize=Meta+Up\tMeta+PgUp,Meta+PgUp,Maximize Window
+Window Minimize=Meta+Down\tMeta+PgDown,Meta+PgDown,Minimize Window
+Window Quick Tile Bottom=none,Meta+Down,Quick Tile Window to the Bottom
+Window Quick Tile Top=none,Meta+Up,Quick Tile Window to the Top
+_k_friendly_name=KWin
+
+[plasmashell]
+next activity=none,none,Walk through activities
+previous activity=none,none,Walk through activities (Reverse)
+_k_friendly_name=plasmashell
+
+[services][org.kde.krunner.desktop]
+_launch=Alt+Space\tAlt+F2\tSearch\tMeta+R
+
+[services][org.kde.spectacle.desktop]
+RecordRegion=Meta+Shift+R

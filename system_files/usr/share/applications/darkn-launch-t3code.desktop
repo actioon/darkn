@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open T3 Code
+Name[ar]=فتح T3 Code
+Exec=/usr/libexec/darkn-launch t3code
+Icon=applications-development
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+3

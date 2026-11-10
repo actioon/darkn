@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Darkn OS Shortcuts
+Name[ar]=اختصارات Darkn OS
+Comment=Keyboard shortcut reference
+Exec=/usr/libexec/darkn-launch shortcuts
+Icon=preferences-desktop-keyboard-shortcut
+Terminal=false
+Categories=Utility;Documentation;
+X-KDE-Shortcuts=Meta+F1

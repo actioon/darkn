@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open Task Manager
+Name[ar]=فتح مدير المهام
+Exec=/usr/libexec/darkn-launch taskmanager
+Icon=io.missioncenter.MissionCenter
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Ctrl+Shift+Esc

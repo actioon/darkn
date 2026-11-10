@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open ChatGPT
+Name[ar]=فتح ChatGPT
+Exec=/usr/libexec/darkn-launch chatgpt
+Icon=chatgpt
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+G

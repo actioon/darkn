@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open System Settings
+Name[ar]=فتح الإعدادات
+Exec=/usr/libexec/darkn-launch settings
+Icon=systemsettings
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+I

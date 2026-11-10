@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Darkn OS: copy text from any part of the screen (Arabic and English).
+# Select a region; the recognized text lands on the clipboard.
+
+set -uo pipefail
+
+img="$(mktemp --suffix=.png)"
+trap 'rm -f "$img"' EXIT
+
+# -b background, -n no notification, -r rectangular region, -o output file
+spectacle -b -n -r -o "$img" >/dev/null 2>&1
+[[ -s "$img" ]] || exit 0
+
+text="$(tesseract "$img" - -l ara+eng 2>/dev/null | sed -e 's/[[:space:]]*$//')"
+if [[ -z "${text//[[:space:]]/}" ]]; then
+    notify-send --app-name="Darkn OS" --icon=dialog-warning "No text found" "Try a larger or clearer selection."
+    exit 0
+fi
+
+printf '%s' "$text" | wl-copy
+notify-send --app-name="Darkn OS" --icon=edit-copy "Text copied" "${text:0:120}"

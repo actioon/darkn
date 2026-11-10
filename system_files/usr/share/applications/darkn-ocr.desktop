@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Copy Text from Screen
+Name[ar]=نسخ نص من الشاشة
+Exec=/usr/libexec/darkn-ocr
+Icon=edit-select-text
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+X

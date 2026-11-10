@@ -6,7 +6,8 @@ set -ouex pipefail
 cp -avf "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
-chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra
+chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
+    /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick
 ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
 
 ### Programming languages and build tools
@@ -43,7 +44,21 @@ dnf5 install -y \
     plasma-smart-video-wallpaper-reborn \
     wl-clipboard \
     dotool \
-    gtk-layer-shell
+    gtk-layer-shell \
+    yakuake \
+    tesseract \
+    tesseract-langpack-eng \
+    tesseract-langpack-ara
+
+### Keyboard shortcuts and quick tools
+# Shortcuts are declared in /usr/share/applications/darkn-*.desktop
+# (X-KDE-Shortcuts) and /etc/skel/.config/kglobalshortcutsrc; the reference
+# page is /usr/share/darkn/shortcuts.html.
+# Yakuake is the drop-down terminal on F12; it has to be running to answer.
+install -D -m 0644 /usr/share/applications/org.kde.yakuake.desktop /etc/xdg/autostart/org.kde.yakuake.desktop
+command -v spectacle
+command -v tesseract
+tesseract --list-langs | grep -qx ara
 
 ### Voice typing (speech to text)
 # Handy: offline dictation into any app, with the Cohere Transcribe Arabic

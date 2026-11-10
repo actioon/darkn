@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open WhatsApp
+Name[ar]=فتح WhatsApp
+Exec=/usr/libexec/darkn-launch whatsapp
+Icon=com.rtosta.zapzap
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+W

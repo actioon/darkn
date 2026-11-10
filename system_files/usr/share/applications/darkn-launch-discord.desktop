@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open Discord
+Name[ar]=فتح Discord
+Exec=/usr/libexec/darkn-launch discord
+Icon=com.discordapp.Discord
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+D

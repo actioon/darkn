@@ -9,3 +9,4 @@ Terminal=false
 NoDisplay=true
 StartupNotify=false
 Categories=Utility;
+X-KDE-Shortcuts=Meta+H

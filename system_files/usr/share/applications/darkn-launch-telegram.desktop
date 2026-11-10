@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Open Telegram
+Name[ar]=فتح Telegram
+Exec=/usr/libexec/darkn-launch telegram
+Icon=org.telegram.desktop
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+X-KDE-Shortcuts=Meta+Shift+T

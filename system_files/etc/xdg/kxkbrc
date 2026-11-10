@@ -1,0 +1,10 @@
+# Darkn OS keyboard layouts: English and Arabic, switched with Alt+Shift
+# (Meta+Space also works, see /etc/skel/.config/kglobalshortcutsrc).
+[Layout]
+Use=true
+LayoutList=us,ara
+VariantList=,
+DisplayNames=,
+Options=grp:alt_shift_toggle
+ResetOldOptions=true
+SwitchMode=Global
