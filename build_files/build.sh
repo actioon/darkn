@@ -201,12 +201,13 @@ systemctl enable darkn-mount-ntfs.service
 # darkn-notify-soundd plays the sound a user assigned to an app or a group
 # of apps; darkn-notification-sounds is its settings window (PyQt6).
 # The sound themes give a good set of sounds to choose from.
-dnf5 install -y python3-pyqt6 pipewire-utils ocean-sound-theme oxygen-sounds sound-theme-freedesktop
+dnf5 install -y python3-pyqt6 pipewire-utils ocean-sound-theme oxygen-sounds sound-theme-freedesktop \
+    rsms-inter-vf-fonts
 chmod 0755 /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
 systemctl --global enable darkn-notify-sound.service
 python3 -m py_compile /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
 find /usr/libexec /usr/bin -maxdepth 1 -name '__pycache__' -exec rm -rf {} +
-python3 -c "import PyQt6.QtWidgets"
+python3 -c "import PyQt6.QtWidgets, PyQt6.QtSvg"
 command -v pw-play
 command -v busctl
 

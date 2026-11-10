@@ -13,19 +13,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QByteArray, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSlider, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractButton, QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSlider,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 HOME = Path.home()
 CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "darkn" / "notification-sounds.json"
 STATE_FILE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "darkn" / "notification-apps.json"
 DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share")
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "darkn" / "notification-sounds"
 
 APP_DIRS = [
     Path("/usr/share/applications"),
@@ -59,7 +60,7 @@ def save_config(config):
 
 
 def read_desktop_entry(path):
-    """Name and visibility of a .desktop file, or None if it is not an app."""
+    """Name of a .desktop file's app, or None if it is hidden or not an app."""
     name, hidden, kind, in_main = "", False, "Application", False
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -118,8 +119,12 @@ def list_sounds():
             if path.suffix.lower() in SOUND_SUFFIXES and path.is_file():
                 relative = path.relative_to(folder)
                 theme = relative.parts[0] if len(relative.parts) > 1 else "My sounds"
-                sounds.append((f"{theme}: {path.stem}", str(path)))
+                sounds.append((f"{pretty(path.stem)}  ·  {theme}", str(path)))
     return sorted(set(sounds), key=lambda s: s[0].lower())
+
+
+def pretty(stem):
+    return stem.replace("-", " ").replace("_", " ").strip().capitalize()
 
 
 def play_sound(path, volume):
@@ -137,54 +142,271 @@ def play_sound(path, volume):
         pass
 
 
+# --- look ------------------------------------------------------------------
+
+BG = "#0f0f10"
+CARD = "#171718"
+LINE = "#262628"
+FIELD = "#1d1d1f"
+HOVER = "#1f1f21"
+SELECTED = "#27272a"
+TEXT = "#ececed"
+MUTED = "#8a8a90"
+FAINT = "#5c5c62"
+DANGER = "#ff7b72"
+
+ICONS = {
+    "plus": '<path d="M12 5v14M5 12h14"/>',
+    "search": '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+    "bell": '<path d="M6 10a6 6 0 0 1 12 0c0 4.5 2 6 2 6H4s2-1.5 2-6"/><path d="M10 19.5a2 2 0 0 0 4 0"/>',
+    "play": '<path d="M8 5.5v13l11-6.5z"/>',
+    "trash": '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12.5h10L18 7M9 7V4h6v3"/>',
+    "up": '<path d="M6 14.5l6-6 6 6"/>',
+    "down": '<path d="M6 9.5l6 6 6-6"/>',
+    "folder": '<path d="M3.5 7.5a1 1 0 0 1 1-1h4.5l2 2h8.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/>',
+    "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    "volume": '<path d="M4 10v4h3l5 4V6l-5 4z"/><path d="M16 9a4.5 4.5 0 0 1 0 6"/>',
+    "layers": '<path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/>',
+    "moon": '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/>',
+}
+
+
+def svg(name, color, width=1.7):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round" '
+            f'stroke-linejoin="round">{ICONS[name]}</svg>')
+
+
+def icon(name, color=TEXT, size=18):
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    QSvgRenderer(QByteArray(svg(name, color).encode())).render(painter, QRectF(0, 0, size * 2, size * 2))
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def asset(name, color, width=1.7):
+    """Write an icon to the cache so the style sheet can refer to it."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = CACHE_DIR / f"{name}.svg"
+    path.write_text(svg(name, color, width), encoding="utf-8")
+    return path.as_posix()
+
+
+def style_sheet():
+    check = asset("check", "#111112", 2.6)
+    chevron = asset("down", MUTED)
+    return f"""
+    QWidget {{ color: {TEXT}; font-size: 13px; }}
+    QWidget#root {{ background: {BG}; }}
+    QFrame#card {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 14px; }}
+    QFrame#divider {{ background: {LINE}; max-height: 1px; border: none; }}
+    QFrame#tile {{ background: {FIELD}; border: 1px solid {LINE}; border-radius: 10px; }}
+    QLabel {{ background: transparent; }}
+    QLabel#appTitle {{ font-size: 16px; font-weight: 600; }}
+    QLabel#heading {{ font-size: 14px; font-weight: 600; }}
+    QLabel#muted {{ color: {MUTED}; }}
+    QLabel#section {{ color: {MUTED}; font-size: 12px; }}
+    QLabel#rowTitle {{ font-size: 13px; font-weight: 500; }}
+    QLabel#rowSub {{ color: {MUTED}; font-size: 12px; }}
+    QLabel#emptyTitle {{ font-size: 15px; font-weight: 600; }}
+
+    QLineEdit {{ background: {FIELD}; border: 1px solid {LINE}; border-radius: 9px;
+                 padding: 8px 11px; selection-background-color: #3b3b42; }}
+    QLineEdit:focus {{ border-color: #47474e; }}
+    QLineEdit#ruleName {{ background: transparent; border: 1px solid transparent; border-radius: 9px;
+                          font-size: 20px; font-weight: 600; padding: 4px 6px; }}
+    QLineEdit#ruleName:hover {{ border-color: {LINE}; }}
+    QLineEdit#ruleName:focus {{ border-color: #47474e; background: {FIELD}; }}
+    QLineEdit#search {{ background: transparent; border: none; padding: 9px 2px; }}
+
+    QListWidget {{ background: transparent; border: none; outline: 0; }}
+    QListWidget::item {{ border-radius: 9px; }}
+    QListWidget::item:hover {{ background: {HOVER}; }}
+    QListWidget::item:selected {{ background: {SELECTED}; color: {TEXT}; }}
+    QListWidget#apps::item {{ padding: 8px 9px; }}
+    QListWidget#apps::item:selected {{ background: {HOVER}; }}
+    QListWidget#apps::indicator {{ width: 16px; height: 16px; border-radius: 5px;
+                                   border: 1px solid #3c3c41; background: {FIELD}; }}
+    QListWidget#apps::indicator:checked {{ background: #f1f1f2; border-color: #f1f1f2; image: url({check}); }}
+
+    QPushButton {{ background: #222224; border: 1px solid #2d2d30; border-radius: 9px; padding: 8px 14px; }}
+    QPushButton:hover {{ background: #29292c; }}
+    QPushButton:pressed {{ background: #303034; }}
+    QPushButton#primary {{ background: #f1f1f2; color: #111112; border: none; font-weight: 600; }}
+    QPushButton#primary:hover {{ background: #ffffff; }}
+    QPushButton#ghost {{ background: transparent; border: none; border-radius: 8px; padding: 7px; }}
+    QPushButton#ghost:hover {{ background: #242426; }}
+    QPushButton#danger {{ background: transparent; border: none; color: {DANGER}; padding: 8px 10px; }}
+    QPushButton#danger:hover {{ background: #2a1b1b; }}
+    QPushButton#round {{ background: #f1f1f2; border: none; border-radius: 17px;
+                         min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0; }}
+    QPushButton#round:hover {{ background: #ffffff; }}
+
+    QComboBox {{ background: {FIELD}; border: 1px solid {LINE}; border-radius: 9px; padding: 8px 11px; }}
+    QComboBox:hover {{ border-color: #38383d; }}
+    QComboBox::drop-down {{ border: none; width: 30px; }}
+    QComboBox::down-arrow {{ image: url({chevron}); width: 15px; height: 15px; }}
+    QComboBox QAbstractItemView {{ background: #1b1b1d; border: 1px solid #2f2f33; border-radius: 9px;
+                                   padding: 4px; outline: 0; selection-background-color: #2a2a2e; }}
+
+    QSlider::groove:horizontal {{ height: 4px; background: #2e2e32; border-radius: 2px; }}
+    QSlider::sub-page:horizontal {{ background: #e9e9ea; border-radius: 2px; }}
+    QSlider::handle:horizontal {{ background: #ffffff; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }}
+
+    QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+    QScrollBar::handle:vertical {{ background: #303034; border-radius: 3px; min-height: 28px; }}
+    QScrollBar::handle:vertical:hover {{ background: #3d3d42; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+    QToolTip {{ background: #1b1b1d; color: {TEXT}; border: 1px solid #2f2f33; padding: 4px 6px; }}
+    """
+
+
 # --- widgets ---------------------------------------------------------------
 
-class SoundPicker(QWidget):
-    """Sound drop-down with Browse, a volume slider and a Play button."""
+class Toggle(QAbstractButton):
+    """A switch."""
 
-    def __init__(self, sounds, on_change=None, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._on_change = on_change
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(38, 22)
+
+    def sizeHint(self):
+        return QSize(38, 22)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        on = self.isChecked()
+        painter.setBrush(QColor("#f1f1f2" if on else "#2f2f33"))
+        painter.drawRoundedRect(QRectF(0, 0, 38, 22), 11, 11)
+        painter.setBrush(QColor("#111112" if on else "#9a9aa0"))
+        painter.drawEllipse(QRectF(19 if on else 3, 3, 16, 16))
+        painter.end()
+
+
+def label(text, name=None, wrap=False):
+    widget = QLabel(text)
+    if name:
+        widget.setObjectName(name)
+    widget.setWordWrap(wrap)
+    return widget
+
+
+def icon_tile(name, size=34):
+    tile = QFrame()
+    tile.setObjectName("tile")
+    tile.setFixedSize(size, size)
+    glyph = QLabel(tile)
+    glyph.setPixmap(icon(name, TEXT, 18).pixmap(18, 18))
+    glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    glyph.setGeometry(0, 0, size, size)
+    return tile
+
+
+def ghost_button(name, tip):
+    button = QPushButton(icon(name, MUTED, 18), "")
+    button.setObjectName("ghost")
+    button.setIconSize(QSize(18, 18))
+    button.setToolTip(tip)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return button
+
+
+def divider():
+    line = QFrame()
+    line.setObjectName("divider")
+    line.setFixedHeight(1)
+    return line
+
+
+class RuleRow(QWidget):
+    """One entry of the rule list: icon, name, summary and an on/off switch."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, icon_name, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.title = label("", "rowTitle")
+        self.sub = label("", "rowSub")
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        text.setContentsMargins(0, 0, 0, 0)
+        text.addWidget(self.title)
+        text.addWidget(self.sub)
+        self.switch = Toggle()
+        self.switch.toggled.connect(self.toggled)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(9, 8, 10, 8)
+        row.setSpacing(11)
+        row.addWidget(icon_tile(icon_name))
+        row.addLayout(text, 1)
+        row.addWidget(self.switch)
+
+    def update_text(self, title, sub, on):
+        self.title.setText(title)
+        self.sub.setText(sub)
+        self.switch.blockSignals(True)
+        self.switch.setChecked(on)
+        self.switch.blockSignals(False)
+
+
+class SoundPicker(QWidget):
+    """Sound drop-down with Browse, Play and a volume slider."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, sounds, parent=None):
+        super().__init__(parent)
         self.combo = QComboBox()
         self.combo.setMinimumWidth(220)
         self.combo.addItem("No sound", "")
-        for label, path in sounds:
-            self.combo.addItem(label, path)
+        for text, path in sounds:
+            self.combo.addItem(text, path)
 
-        browse = QPushButton("Browse…")
+        browse = QPushButton(icon("folder", TEXT, 16), " Browse")
         browse.clicked.connect(self._browse)
-        play = QPushButton(QIcon.fromTheme("media-playback-start"), "Play")
+        play = QPushButton(icon("play", "#111112", 16), "")
+        play.setObjectName("round")
+        play.setToolTip("Play")
+        play.setCursor(Qt.CursorShape.PointingHandCursor)
         play.clicked.connect(lambda: play_sound(self.sound(), self.volume()))
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(10, 150)
         self.slider.setValue(100)
-        self.slider.setFixedWidth(120)
-        self.percent = QLabel("100%")
-        self.percent.setFixedWidth(44)
+        self.percent = label("100%", "muted")
+        self.percent.setFixedWidth(42)
+        self.percent.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.slider.valueChanged.connect(lambda v: self.percent.setText(f"{v}%"))
 
-        # Two rows, so the picker also fits in a narrow dialog.
         top = QHBoxLayout()
+        top.setSpacing(8)
         top.addWidget(self.combo, 1)
         top.addWidget(browse)
+        top.addWidget(play)
+        volume_icon = QLabel()
+        volume_icon.setPixmap(icon("volume", MUTED, 18).pixmap(18, 18))
         bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("Volume"))
-        bottom.addWidget(self.slider)
+        bottom.setSpacing(10)
+        bottom.addWidget(volume_icon)
+        bottom.addWidget(self.slider, 1)
         bottom.addWidget(self.percent)
-        bottom.addWidget(play)
-        bottom.addStretch(1)
         rows = QVBoxLayout(self)
         rows.setContentsMargins(0, 0, 0, 0)
+        rows.setSpacing(12)
         rows.addLayout(top)
         rows.addLayout(bottom)
 
-        self.combo.currentIndexChanged.connect(self._changed)
-        self.slider.sliderReleased.connect(self._changed)
-
-    def _changed(self, *_):
-        if self._on_change:
-            self._on_change()
+        self.combo.currentIndexChanged.connect(lambda *_: self.changed.emit())
+        self.slider.valueChanged.connect(lambda *_: self.changed.emit())
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -198,302 +420,438 @@ class SoundPicker(QWidget):
     def volume(self):
         return self.slider.value() / 100
 
+    def load(self, sound, volume):
+        self.blockSignals(True)
+        self.set_sound(sound or "")
+        self.slider.setValue(int(round(float(volume or 1.0) * 100)))
+        self.blockSignals(False)
+
     def set_sound(self, path):
         index = self.combo.findData(path) if path else 0
         if index < 0:
-            self.combo.addItem(f"File: {Path(path).name}", path)
+            self.combo.addItem(f"{Path(path).name}  ·  file", path)
             index = self.combo.count() - 1
         self.combo.setCurrentIndex(index)
 
-    def set_volume(self, volume):
-        self.slider.setValue(int(round(float(volume or 1.0) * 100)))
 
+class MainWindow(QWidget):
+    DEFAULT = "default"  # list entry for "every other app"
 
-class RuleDialog(QDialog):
-    def __init__(self, apps, sounds, rule=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Notification sound rule")
-        self.setMinimumSize(640, 560)
-        rule = rule or {}
-        chosen = {str(a.get("id", "")).lower(): a for a in rule.get("apps", [])}
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("root")
+        self.setWindowTitle("Notification Sounds")
+        self.setWindowIcon(QIcon.fromTheme("preferences-desktop-notification-bell"))
+        self.resize(1000, 680)
+        self.setMinimumSize(860, 560)
 
-        self.name = QLineEdit(rule.get("name", ""))
-        self.name.setPlaceholderText("For example: Chat apps")
+        self.config = load_config()
+        self.sounds = list_sounds()
+        self.all_apps = list_apps()
+        self._loading = False
+        self.rows = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 16)
+        root.setSpacing(14)
+        root.addLayout(self._build_header())
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        body.addWidget(self._build_sidebar())
+        body.addWidget(self._build_editor(), 1)
+        root.addLayout(body, 1)
+
+        self._refresh_list(select=0 if self.config["rules"] else None)
+
+    # layout
+
+    def _build_header(self):
+        self.enabled = Toggle()
+        self.enabled.setChecked(bool(self.config.get("enabled", True)))
+        self.enabled.toggled.connect(self._options_changed)
+        self.dnd = Toggle()
+        self.dnd.setChecked(bool(self.config.get("play_during_dnd", True)))
+        self.dnd.toggled.connect(self._options_changed)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        titles.addWidget(label("Notification Sounds", "appTitle"))
+        titles.addWidget(label("A different sound for each app or group of apps", "muted"))
+
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        header.addWidget(icon_tile("bell", 40))
+        header.addLayout(titles)
+        header.addStretch(1)
+        moon = QLabel()
+        moon.setPixmap(icon("moon", MUTED, 16).pixmap(16, 16))
+        header.addWidget(moon)
+        header.addWidget(label("Play during Do Not Disturb", "muted"))
+        header.addWidget(self.dnd)
+        header.addSpacing(14)
+        header.addWidget(label("Custom sounds", "muted"))
+        header.addWidget(self.enabled)
+        return header
+
+    def _build_sidebar(self):
+        card = QFrame()
+        card.setObjectName("card")
+        card.setFixedWidth(330)
+
+        add = ghost_button("plus", "Add rule")
+        add.clicked.connect(self.add_rule)
+        top = QHBoxLayout()
+        top.setContentsMargins(16, 12, 10, 10)
+        top.addWidget(label("Rules", "heading"))
+        top.addStretch(1)
+        top.addWidget(add)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search apps…")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self._filter)
+        self.search.setObjectName("search")
+        self.search.setPlaceholderText("Search…")
+        self.search.textChanged.connect(self._filter_rules)
+        glass = QLabel()
+        glass.setPixmap(icon("search", MUTED, 17).pixmap(17, 17))
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(16, 0, 14, 0)
+        search_row.setSpacing(9)
+        search_row.addWidget(glass)
+        search_row.addWidget(self.search, 1)
+
+        self.rule_list = QListWidget()
+        self.rule_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.rule_list.currentItemChanged.connect(lambda *_: self._show_current())
+        list_box = QVBoxLayout()
+        list_box.setContentsMargins(8, 8, 8, 8)
+        list_box.addWidget(self.rule_list)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addLayout(top)
+        layout.addWidget(divider())
+        layout.addLayout(search_row)
+        layout.addWidget(divider())
+        layout.addLayout(list_box, 1)
+        return card
+
+    def _build_editor(self):
+        card = QFrame()
+        card.setObjectName("card")
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._page_empty())
+        self.pages.addWidget(self._page_rule())
+        self.pages.addWidget(self._page_default())
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.pages)
+        return card
+
+    def _page_empty(self):
+        page = QWidget()
+        button = QPushButton(icon("plus", "#111112", 16), " Add rule")
+        button.setObjectName("primary")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(self.add_rule)
+        title = label("No rules yet", "emptyTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text = label("Create a rule, pick the apps, choose a sound.", "muted")
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout = QVBoxLayout(page)
+        layout.addStretch(1)
+        layout.addWidget(icon_tile("bell", 46), 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(10)
+        layout.addWidget(title)
+        layout.addWidget(text)
+        layout.addSpacing(12)
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
+        return page
+
+    def _page_rule(self):
+        page = QWidget()
+        self.name = QLineEdit()
+        self.name.setObjectName("ruleName")
+        self.name.setPlaceholderText("Rule name")
+        self.name.textEdited.connect(self._rule_edited)
+
+        up = ghost_button("up", "Move up")
+        up.clicked.connect(lambda: self.move_rule(-1))
+        down = ghost_button("down", "Move down")
+        down.clicked.connect(lambda: self.move_rule(1))
+        remove = QPushButton(icon("trash", DANGER, 16), " Remove")
+        remove.setObjectName("danger")
+        remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove.clicked.connect(self.remove_rule)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
+        title_row.addWidget(self.name, 1)
+        title_row.addWidget(up)
+        title_row.addWidget(down)
+        title_row.addWidget(remove)
+
+        self.picker = SoundPicker(self.sounds)
+        self.picker.changed.connect(self._rule_edited)
+
+        self.app_search = QLineEdit()
+        self.app_search.setPlaceholderText("Search apps…")
+        self.app_search.setClearButtonEnabled(True)
+        self.app_search.textChanged.connect(self._filter_apps)
+        self.app_count = label("", "muted")
+        apps_head = QHBoxLayout()
+        apps_head.addWidget(label("APPS", "section"))
+        apps_head.addStretch(1)
+        apps_head.addWidget(self.app_count)
 
         self.apps = QListWidget()
-        known = set()
-        for app in apps:
-            known.add(app["id"].lower())
-            self._add_app(app, app["id"].lower() in chosen)
-        for key, app in chosen.items():  # apps typed in by hand earlier
-            if key not in known:
-                self._add_app({"id": app.get("id", ""), "name": app.get("name") or app.get("id", ""), "seen": False}, True)
+        self.apps.setObjectName("apps")
+        self.apps.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.apps.itemChanged.connect(self._rule_edited)
 
         self.manual = QLineEdit()
-        self.manual.setPlaceholderText("App not in the list? Type its name")
-        add_manual = QPushButton("Add")
-        add_manual.clicked.connect(self._add_manual)
-        self.manual.returnPressed.connect(self._add_manual)
-        manual_row = QHBoxLayout()
-        manual_row.addWidget(self.manual, 1)
-        manual_row.addWidget(add_manual)
+        self.manual.setPlaceholderText("App not listed? Type its name and press Enter")
+        self.manual.returnPressed.connect(self._add_manual_app)
 
-        self.picker = SoundPicker(sounds)
-        self.picker.set_sound(rule.get("sound", ""))
-        self.picker.set_volume(rule.get("volume", 1.0))
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-
-        form = QFormLayout()
-        form.addRow("Rule name", self.name)
-        form.addRow("Sound", self.picker)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Apps that use this sound (● = has sent notifications before):"))
-        layout.addWidget(self.search)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 16, 20, 18)
+        layout.setSpacing(10)
+        layout.addLayout(title_row)
+        layout.addSpacing(4)
+        layout.addWidget(label("SOUND", "section"))
+        layout.addWidget(self.picker)
+        layout.addSpacing(8)
+        layout.addLayout(apps_head)
+        layout.addWidget(self.app_search)
         layout.addWidget(self.apps, 1)
-        layout.addLayout(manual_row)
-        layout.addWidget(buttons)
+        layout.addWidget(self.manual)
+        return page
 
-    def _add_app(self, app, checked):
-        label = f"● {app['name']}" if app.get("seen") else app["name"]
-        item = QListWidgetItem(label)
+    def _page_default(self):
+        page = QWidget()
+        self.default_picker = SoundPicker(self.sounds)
+        self.default_picker.changed.connect(self._default_edited)
+        note = label("Used for apps that have no rule of their own. Chat apps such as Telegram and "
+                     "Discord also play their own sound; turn that off inside the app, or you will "
+                     "hear two sounds.", "muted", wrap=True)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 16, 20, 18)
+        layout.setSpacing(10)
+        title = label("Every other app")
+        title.setStyleSheet("font-size: 20px; font-weight: 600; padding: 5px 6px;")
+        layout.addWidget(title)
+        layout.addSpacing(4)
+        layout.addWidget(label("SOUND", "section"))
+        layout.addWidget(self.default_picker)
+        layout.addSpacing(10)
+        layout.addWidget(note)
+        layout.addStretch(1)
+        return page
+
+    # rule list
+
+    def _summary(self, rule):
+        apps = rule.get("apps", [])
+        count = f"{len(apps)} app" + ("" if len(apps) == 1 else "s")
+        sound = pretty(Path(rule.get("sound", "")).stem) if rule.get("sound") else "No sound"
+        return f"{count}  ·  {sound}"
+
+    def _refresh_list(self, select=None):
+        self._loading = True
+        self.rule_list.clear()
+        self.rows = []
+        for index, rule in enumerate(self.config["rules"]):
+            row = RuleRow("bell")
+            row.update_text(rule.get("name") or "Untitled rule", self._summary(rule), rule.get("enabled", True))
+            row.toggled.connect(lambda on, i=index: self._rule_toggled(i, on))
+            self._append_row(row, index)
+        default = self.config.get("default") or {}
+        row = RuleRow("layers")
+        row.update_text("Every other app",
+                        pretty(Path(default.get("sound", "")).stem) if default.get("sound") else "No sound",
+                        bool(default.get("enabled", False)))
+        row.toggled.connect(self._default_toggled)
+        self._append_row(row, self.DEFAULT)
+        self._loading = False
+
+        if select is None:
+            self.rule_list.setCurrentRow(-1)
+            self.pages.setCurrentIndex(0 if not self.config["rules"] else self.pages.currentIndex())
+            if not self.config["rules"]:
+                self.pages.setCurrentIndex(0)
+        else:
+            self.rule_list.setCurrentRow(select)
+        self._filter_rules(self.search.text())
+
+    def _append_row(self, row, key):
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, key)
+        item.setSizeHint(QSize(0, 54))
+        self.rule_list.addItem(item)
+        self.rule_list.setItemWidget(item, row)
+        self.rows.append(row)
+
+    def _filter_rules(self, text):
+        text = text.lower()
+        for index in range(self.rule_list.count()):
+            row = self.rows[index]
+            match = text in row.title.text().lower() or text in row.sub.text().lower()
+            self.rule_list.item(index).setHidden(bool(text) and not match)
+
+    def current_key(self):
+        item = self.rule_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _show_current(self):
+        if self._loading:
+            return
+        key = self.current_key()
+        if key is None:
+            self.pages.setCurrentIndex(0)
+        elif key == self.DEFAULT:
+            default = self.config.get("default") or {}
+            self.default_picker.load(default.get("sound", ""), default.get("volume", 1.0))
+            self.pages.setCurrentIndex(2)
+        else:
+            self._load_rule(self.config["rules"][key])
+            self.pages.setCurrentIndex(1)
+
+    # rule editor
+
+    def _load_rule(self, rule):
+        self._loading = True
+        self.name.setText(rule.get("name", ""))
+        self.picker.load(rule.get("sound", ""), rule.get("volume", 1.0))
+        chosen = {str(a.get("id", "")).lower(): a for a in rule.get("apps", [])}
+        self.apps.clear()
+        known = set()
+        for app in self.all_apps:
+            known.add(app["id"].lower())
+            self._add_app_item(app, app["id"].lower() in chosen)
+        for key, app in chosen.items():  # apps typed in by hand
+            if key not in known:
+                self._add_app_item({"id": app.get("id", ""), "name": app.get("name") or app.get("id", "")}, True)
+        self.app_search.clear()
+        self._loading = False
+        self._update_app_count()
+
+    def _add_app_item(self, app, checked):
+        item = QListWidgetItem(app["name"])
         item.setData(Qt.ItemDataRole.UserRole, {"id": app["id"], "name": app["name"]})
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setFlags((item.flags() | Qt.ItemFlag.ItemIsUserCheckable) & ~Qt.ItemFlag.ItemIsSelectable)
         item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-        item.setToolTip(app["id"])
+        if app.get("seen"):
+            item.setToolTip(f"{app['id']} — has sent notifications before")
+        else:
+            item.setToolTip(app["id"])
         self.apps.addItem(item)
         return item
 
-    def _add_manual(self):
+    def _add_manual_app(self):
         text = self.manual.text().strip()
-        if not text:
+        if not text or self.current_key() in (None, self.DEFAULT):
             return
-        item = self._add_app({"id": text, "name": text, "seen": False}, True)
-        self.apps.scrollToItem(item)
         self.manual.clear()
+        item = self._add_app_item({"id": text, "name": text}, True)
+        self.apps.scrollToItem(item)
 
-    def _filter(self, text):
+    def _filter_apps(self, text):
         text = text.lower()
         for row in range(self.apps.count()):
             item = self.apps.item(row)
             item.setHidden(text not in item.text().lower())
 
-    def selected_apps(self):
+    def _selected_apps(self):
         return [self.apps.item(r).data(Qt.ItemDataRole.UserRole)
                 for r in range(self.apps.count())
                 if self.apps.item(r).checkState() == Qt.CheckState.Checked]
 
-    def _accept(self):
-        if not self.selected_apps():
-            QMessageBox.information(self, "Choose apps", "Tick at least one app for this rule.")
+    def _update_app_count(self):
+        count = len(self._selected_apps())
+        self.app_count.setText(f"{count} selected")
+
+    def _rule_edited(self, *_):
+        key = self.current_key()
+        if self._loading or key in (None, self.DEFAULT):
             return
-        if not self.picker.sound():
-            QMessageBox.information(self, "Choose a sound", "Pick the sound this rule should play.")
+        rule = self.config["rules"][key]
+        rule["name"] = self.name.text().strip()
+        rule["sound"] = self.picker.sound()
+        rule["volume"] = self.picker.volume()
+        rule["apps"] = self._selected_apps()
+        self._update_app_count()
+        self.rows[key].update_text(rule["name"] or "Untitled rule", self._summary(rule), rule.get("enabled", True))
+        save_config(self.config)
+
+    def _rule_toggled(self, index, on):
+        self.config["rules"][index]["enabled"] = on
+        save_config(self.config)
+
+    # actions
+
+    def add_rule(self):
+        self.search.clear()
+        self.config["rules"].append({"name": "New rule", "enabled": True, "apps": [], "sound": "", "volume": 1.0})
+        save_config(self.config)
+        self._refresh_list(select=len(self.config["rules"]) - 1)
+        self.name.setFocus()
+        self.name.selectAll()
+
+    def remove_rule(self):
+        key = self.current_key()
+        if key in (None, self.DEFAULT):
             return
-        self.accept()
+        del self.config["rules"][key]
+        save_config(self.config)
+        remaining = len(self.config["rules"])
+        self._refresh_list(select=min(key, remaining - 1) if remaining else None)
 
-    def rule(self, enabled=True):
-        apps = self.selected_apps()
-        name = self.name.text().strip() or ", ".join(a["name"] for a in apps[:3])
-        return {"name": name, "enabled": enabled, "apps": apps,
-                "sound": self.picker.sound(), "volume": self.picker.volume()}
+    def move_rule(self, step):
+        key = self.current_key()
+        rules = self.config["rules"]
+        if key in (None, self.DEFAULT) or not 0 <= key + step < len(rules):
+            return
+        rules[key], rules[key + step] = rules[key + step], rules[key]
+        save_config(self.config)
+        self._refresh_list(select=key + step)
 
+    # everything else, and global options
 
-class MainWindow(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Notification Sounds")
-        self.setWindowIcon(QIcon.fromTheme("preferences-desktop-notification-bell"))
-        self.resize(860, 620)
-        self.config = load_config()
-        self.sounds = list_sounds()
-        self._loading = True
-
-        intro = QLabel("Give an app, or a group of apps, its own notification sound. "
-                       "Rules are checked from top to bottom; the first match wins.")
-        intro.setWordWrap(True)
-
-        self.enabled = QCheckBox("Use custom notification sounds")
-        self.dnd = QCheckBox("Keep playing sounds while Do Not Disturb is on")
-        self.enabled.toggled.connect(self._save_options)
-        self.dnd.toggled.connect(self._save_options)
-
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Rule", "Apps", "Sound"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.itemChanged.connect(self._rule_toggled)
-        self.table.itemDoubleClicked.connect(lambda *_: self._edit())
-
-        buttons = QHBoxLayout()
-        for label, icon, slot in (
-            ("Add rule…", "list-add", self._add),
-            ("Edit…", "document-edit", self._edit),
-            ("Remove", "list-remove", self._remove),
-            ("Move up", "go-up", lambda: self._move(-1)),
-            ("Move down", "go-down", lambda: self._move(1)),
-            ("Play", "media-playback-start", self._play_selected),
-        ):
-            button = QPushButton(QIcon.fromTheme(icon), label)
-            button.clicked.connect(slot)
-            buttons.addWidget(button)
-        buttons.addStretch(1)
-
-        rules_box = QGroupBox("Rules")
-        rules_layout = QVBoxLayout(rules_box)
-        rules_layout.addWidget(self.table)
-        rules_layout.addLayout(buttons)
-
-        self.default_on = QCheckBox("Play this sound for every other app")
-        self.default_picker = SoundPicker(self.sounds, on_change=self._save_default)
-        self.default_on.toggled.connect(self._save_default)
-        default_box = QGroupBox("Everything else")
-        default_layout = QVBoxLayout(default_box)
-        default_layout.addWidget(self.default_on)
-        default_layout.addWidget(self.default_picker)
-
-        tip = QLabel("Tip: apps such as Telegram and Discord also play their own sound. "
-                     "Turn that off inside the app, or you will hear two sounds.")
-        tip.setWordWrap(True)
-        tip.setEnabled(False)
-
-        close = QPushButton("Close")
-        close.clicked.connect(self.close)
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-        bottom.addWidget(close)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(intro)
-        layout.addWidget(self.enabled)
-        layout.addWidget(self.dnd)
-        layout.addWidget(rules_box, 1)
-        layout.addWidget(default_box)
-        layout.addWidget(tip)
-        layout.addLayout(bottom)
-
-        self._load()
-
-    # loading and saving
-
-    def _load(self):
-        self._loading = True
-        self.enabled.setChecked(bool(self.config.get("enabled", True)))
-        self.dnd.setChecked(bool(self.config.get("play_during_dnd", True)))
+    def _default_edited(self):
+        if self._loading:
+            return
         default = self.config.get("default") or {}
-        self.default_on.setChecked(bool(default.get("enabled", False)) and bool(default.get("sound")))
-        self.default_picker.set_sound(default.get("sound", ""))
-        self.default_picker.set_volume(default.get("volume", 1.0))
-        self._fill_table()
-        self._loading = False
-
-    def _fill_table(self, select=None):
-        was_loading, self._loading = self._loading, True
-        self.table.setRowCount(0)
-        for rule in self.config["rules"]:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            name = QTableWidgetItem(rule.get("name", ""))
-            name.setFlags(name.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            name.setCheckState(Qt.CheckState.Checked if rule.get("enabled", True) else Qt.CheckState.Unchecked)
-            self.table.setItem(row, 0, name)
-            self.table.setItem(row, 1, QTableWidgetItem(", ".join(a.get("name", "") for a in rule.get("apps", []))))
-            self.table.setItem(row, 2, QTableWidgetItem(Path(rule.get("sound", "")).stem))
-        if select is not None and 0 <= select < self.table.rowCount():
-            self.table.selectRow(select)
-        self._loading = was_loading
-
-    def _save(self):
-        if not self._loading:
-            save_config(self.config)
-
-    def _save_options(self, *_):
-        self.config["enabled"] = self.enabled.isChecked()
-        self.config["play_during_dnd"] = self.dnd.isChecked()
-        self._save()
-
-    def _save_default(self, *_):
         self.config["default"] = {
-            "enabled": self.default_on.isChecked(),
+            "enabled": bool(default.get("enabled", False)) or not default,
             "sound": self.default_picker.sound(),
             "volume": self.default_picker.volume(),
         }
-        self._save()
+        row = self.rows[-1]
+        row.update_text("Every other app",
+                        pretty(Path(self.default_picker.sound()).stem) if self.default_picker.sound() else "No sound",
+                        self.config["default"]["enabled"])
+        save_config(self.config)
 
-    # rule actions
+    def _default_toggled(self, on):
+        default = dict(self.config.get("default") or {"sound": "", "volume": 1.0})
+        default["enabled"] = on
+        self.config["default"] = default
+        save_config(self.config)
 
-    def _row(self):
-        rows = self.table.selectionModel().selectedRows()
-        return rows[0].row() if rows else -1
-
-    def _rule_toggled(self, item):
-        if self._loading or item.column() != 0:
-            return
-        self.config["rules"][item.row()]["enabled"] = item.checkState() == Qt.CheckState.Checked
-        self._save()
-
-    def _add(self):
-        dialog = RuleDialog(list_apps(), self.sounds, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.config["rules"].append(dialog.rule())
-            self._save()
-            self._fill_table(select=len(self.config["rules"]) - 1)
-
-    def _edit(self):
-        row = self._row()
-        if row < 0:
-            return
-        current = self.config["rules"][row]
-        dialog = RuleDialog(list_apps(), self.sounds, rule=current, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.config["rules"][row] = dialog.rule(enabled=current.get("enabled", True))
-            self._save()
-            self._fill_table(select=row)
-
-    def _remove(self):
-        row = self._row()
-        if row < 0:
-            return
-        del self.config["rules"][row]
-        self._save()
-        self._fill_table(select=min(row, len(self.config["rules"]) - 1))
-
-    def _move(self, step):
-        row = self._row()
-        target = row + step
-        rules = self.config["rules"]
-        if row < 0 or not 0 <= target < len(rules):
-            return
-        rules[row], rules[target] = rules[target], rules[row]
-        self._save()
-        self._fill_table(select=target)
-
-    def _play_selected(self):
-        row = self._row()
-        if row >= 0:
-            rule = self.config["rules"][row]
-            play_sound(rule.get("sound", ""), float(rule.get("volume", 1.0)))
+    def _options_changed(self, *_):
+        self.config["enabled"] = self.enabled.isChecked()
+        self.config["play_during_dnd"] = self.dnd.isChecked()
+        save_config(self.config)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Notification Sounds")
     app.setDesktopFileName("darkn-notification-sounds")
+    font = QFont()
+    font.setFamilies(["Inter", "Noto Sans", "Segoe UI", "sans-serif"])
+    font.setPointSize(10)
+    app.setFont(font)
+    app.setStyleSheet(style_sheet())
     window = MainWindow()
     window.show()
     return app.exec()
