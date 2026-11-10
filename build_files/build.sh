@@ -3,7 +3,7 @@
 set -ouex pipefail
 
 # Copy the contents of system_files/ of the git repo to /
-cp -avf "/ctx/system_files"/. /
+cp -af "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
 chmod 0755 /usr/libexec/darkn-installer /usr/bin/darkn-welcome /usr/libexec/darkn-backup \n    /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
