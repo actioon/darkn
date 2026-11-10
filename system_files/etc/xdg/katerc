@@ -1,0 +1,4 @@
+# Darkn OS: text files that are not UTF-8 are most likely old Arabic Windows
+# files, so read them as Windows-1256 instead of a Western encoding.
+[KTextEditor Editor]
+Fallback Encoding=windows-1256

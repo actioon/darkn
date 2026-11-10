@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Service
+MimeType=application/zip;
+Actions=darknUnzip1256;darknUnzip720;
+X-KDE-Submenu=Extract with Arabic file names
+X-KDE-Submenu[ar]=فك الضغط بأسماء عربية صحيحة
+Icon=archive-extract
+
+[Desktop Action darknUnzip1256]
+Name=ZIP from WinRAR or 7-Zip (Windows-1256)
+Name[ar]=ملف من WinRAR أو 7-Zip
+Icon=archive-extract
+Exec=/usr/libexec/darkn-unzip-ar cp1256 %f
+
+[Desktop Action darknUnzip720]
+Name=ZIP from Windows Explorer (CP720)
+Name[ar]=ملف مضغوط من Windows نفسه
+Icon=archive-extract
+Exec=/usr/libexec/darkn-unzip-ar cp720 %f

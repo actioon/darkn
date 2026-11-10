@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Darkn OS: extract a ZIP made on Arabic Windows without garbling file names.
+# ZIP files store names in the creator's legacy code page unless the UTF-8
+# flag is set. Arabic Windows uses CP720 (Explorer's built-in zip) or
+# Windows-1256 (WinRAR, 7-Zip and others).
+#
+#   darkn-unzip-ar <cp1256|cp720> <file.zip>
+
+set -uo pipefail
+
+codepage="${1:-cp1256}"
+zip="${2:-}"
+[[ -f "$zip" ]] || { echo "usage: darkn-unzip-ar <cp1256|cp720> <file.zip>" >&2; exit 2; }
+
+dest="${zip%.*}"
+n=1
+while [[ -e "$dest" ]]; do
+    n=$((n + 1))
+    dest="${zip%.*} ($n)"
+done
+
+if unzip -q -O "$codepage" "$zip" -d "$dest"; then
+    notify-send --app-name="Darkn OS" --icon=archive-extract "Extracted" "$(basename "$dest")" 2>/dev/null
+else
+    notify-send --app-name="Darkn OS" --icon=dialog-error "Could not extract" "$(basename "$zip")" 2>/dev/null
+    exit 1
+fi

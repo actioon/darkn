@@ -7,7 +7,8 @@ cp -avf "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
 chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
-    /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick
+    /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick \
+    /usr/libexec/darkn-unzip-ar
 ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
 
 ### Programming languages and build tools
@@ -49,6 +50,53 @@ dnf5 install -y \
     tesseract \
     tesseract-langpack-eng \
     tesseract-langpack-ara
+
+### Arabic language support
+# Locale, spell checking and a full set of Arabic fonts: Noto for the
+# interface, Amiri and Scheherazade for documents, plus the faces Arabic
+# web and print design relies on.
+dnf5 install -y \
+    glibc-langpack-ar \
+    hunspell-ar \
+    fribidi \
+    google-noto-sans-arabic-vf-fonts \
+    google-noto-sans-arabic-ui-vf-fonts \
+    google-noto-naskh-arabic-vf-fonts \
+    google-noto-kufi-arabic-vf-fonts \
+    amiri-fonts \
+    amiri-quran-fonts \
+    sil-scheherazade-new-fonts \
+    sil-lateef-fonts \
+    vazirmatn-vf-fonts \
+    ibm-plex-sans-arabic-fonts
+
+# Popular Arabic typefaces that Fedora does not package, taken from the
+# Google Fonts repository (all under the SIL Open Font License) at a pinned
+# commit, so the content is fixed by the commit hash.
+GFONTS_COMMIT="5bb28733cec313b63fbd415b574b5ae35c8aa8b8"
+GFONTS_FAMILIES=(cairo tajawal almarai changa elmessiri reemkufi arefruqaa markazitext readexpro)
+git init -q /tmp/gfonts
+git -C /tmp/gfonts remote add origin https://github.com/google/fonts.git
+git -C /tmp/gfonts sparse-checkout set "${GFONTS_FAMILIES[@]/#/ofl/}"
+git -C /tmp/gfonts fetch -q --depth 1 --filter=blob:none origin "${GFONTS_COMMIT}"
+git -C /tmp/gfonts checkout -q FETCH_HEAD
+test "$(git -C /tmp/gfonts rev-parse HEAD)" = "${GFONTS_COMMIT}"
+for family in "${GFONTS_FAMILIES[@]}"; do
+    install -d "/usr/share/fonts/darkn-arabic/${family}"
+    install -m 0644 /tmp/gfonts/ofl/"${family}"/*.ttf "/usr/share/fonts/darkn-arabic/${family}/"
+    install -m 0644 /tmp/gfonts/ofl/"${family}"/OFL.txt "/usr/share/fonts/darkn-arabic/${family}/"
+done
+rm -rf /tmp/gfonts
+
+# Flatpak apps do not read /etc/fonts, but they do read the user's own
+# fontconfig directory, so give every new user the same Arabic font rules.
+install -D -m 0644 /etc/fonts/conf.d/56-darkn-arabic.conf /etc/skel/.config/fontconfig/conf.d/56-darkn-arabic.conf
+
+fc-cache -f
+fc-list :lang=ar family | grep -q "Noto Sans Arabic"
+fc-list family | grep -q "Cairo"
+fc-match "Traditional Arabic" | grep -qi "amiri"
+locale -a | grep -qi '^ar_EG'
 
 ### Keyboard shortcuts and quick tools
 # Shortcuts are declared in /usr/share/applications/darkn-*.desktop
