@@ -121,6 +121,17 @@ build $target_image=image_name $tag=default_tag:
     LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 
+    # The OpenRazer kernel module comes from Universal Blue's akmods image and
+    # has to match the base image's kernel exactly, so look that kernel up.
+    BASE_IMAGE="$(awk '/^FROM ghcr.io\/ublue-os\// {print $2; exit}' Containerfile)"
+    KERNEL="$(skopeo inspect --no-tags --retry-times 3 "docker://${BASE_IMAGE}" | jq -r '.Labels["ostree.linux"]')"
+    if [[ -z "${KERNEL}" || "${KERNEL}" == "null" ]]; then
+        echo "Could not read the kernel version of ${BASE_IMAGE}" >&2
+        exit 1
+    fi
+    FEDORA="$(sed -E 's/.*\.fc([0-9]+)\..*/\1/' <<<"${KERNEL}")"
+    BUILD_ARGS+=("--build-arg" "AKMODS_TAG=coreos-stable-${FEDORA}-${KERNEL}")
+
     # This actually builds the image!
     PODMAN_BUILD_ARGS=("${BUILD_ARGS[@]}" "${LABELS[@]}" --pull=newer --tag "${target_image}:${tag}" --file Containerfile)
 

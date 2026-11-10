@@ -45,6 +45,11 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
+# Razer devices: lighting, DPI and polling rate (uses the OpenRazer driver in the image)
+[Flatpak Preinstall app.polychromatic.controller]
+Branch=stable
+IsRuntime=false
+
 # --- Browsers (Brave is the default, see /etc/xdg/mimeapps.list) ---
 [Flatpak Preinstall com.brave.Browser]
 Branch=stable

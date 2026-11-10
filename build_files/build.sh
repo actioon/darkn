@@ -197,6 +197,54 @@ systemctl --global enable darkn-update-notify.timer
 # Windows data drives (NTFS) are mounted at boot.
 systemctl enable darkn-mount-ntfs.service
 
+### Hardware control: RGB lighting and Razer devices
+# OpenRGB drives motherboard, RAM, cooler and peripheral lighting. Aurora
+# already ships its udev rules; board and RAM lighting also need the I2C
+# modules loaded (see /etc/modules-load.d/darkn-rgb.conf).
+dnf5 install -y openrgb i2c-tools
+
+# OpenRazer: the kernel module is the one Universal Blue builds and signs
+# for this exact kernel; the daemon comes from the OpenRazer project's repo,
+# which is then switched off so it is not used for anything else.
+dnf5 config-manager addrepo \
+    --from-repofile="https://download.opensuse.org/repositories/hardware:/razer/Fedora_$(rpm -E %fedora)/hardware:razer.repo"
+dnf5 install -y /akmods-rpms/kmods/*openrazer*.rpm openrazer-daemon
+dnf5 config-manager setopt hardware_razer.enabled=0
+KERNEL_VERSION="$(rpm -q kernel --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' | head -n1)"
+find "/usr/lib/modules/${KERNEL_VERSION}" -name 'razer*.ko*' | grep -q .
+
+### Fonts
+# Coding, interface and document fonts, so nothing has to be added later.
+# Carlito is metric-compatible with Calibri; Liberation covers Arial,
+# Times New Roman and Courier New.
+dnf5 install -y \
+    jetbrains-mono-fonts-all \
+    fira-code-fonts \
+    cascadia-code-fonts \
+    cascadia-mono-fonts \
+    adobe-source-code-pro-fonts \
+    ibm-plex-mono-fonts \
+    ibm-plex-sans-fonts \
+    google-roboto-fonts \
+    google-roboto-mono-fonts \
+    open-sans-fonts \
+    google-carlito-fonts \
+    liberation-fonts-all \
+    google-noto-color-emoji-fonts
+
+# JetBrains Mono Nerd Font: the coding font with the icon glyphs that the
+# terminal prompt and file listings use. Pinned release and checksum.
+NERD_FONTS_VERSION="3.5.1"
+NERD_FONTS_SHA256="04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf"
+curl -fL --retry 3 -o /tmp/JetBrainsMono.tar.xz \
+    "https://github.com/ryanoasis/nerd-fonts/releases/download/v${NERD_FONTS_VERSION}/JetBrainsMono.tar.xz"
+echo "${NERD_FONTS_SHA256}  /tmp/JetBrainsMono.tar.xz" | sha256sum -c -
+install -d /usr/share/fonts/darkn-nerd-fonts
+tar -xJf /tmp/JetBrainsMono.tar.xz -C /usr/share/fonts/darkn-nerd-fonts --wildcards '*.ttf' 'OFL.txt'
+fc-cache -f
+fc-list family | grep -q "JetBrainsMono Nerd Font"
+fc-list family | grep -q "Inter"
+
 ### Per-app notification sounds
 # darkn-notify-soundd plays the sound a user assigned to an app or a group
 # of apps; darkn-notification-sounds is its settings window (PyQt6).
