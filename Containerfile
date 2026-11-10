@@ -1,3 +1,8 @@
+# Kernel modules built and signed by Universal Blue for the exact kernel of
+# the base image. The tag is worked out by the Justfile. Used for OpenRazer.
+ARG AKMODS_TAG
+FROM ghcr.io/ublue-os/akmods:${AKMODS_TAG} AS akmods
+
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
@@ -35,6 +40,7 @@ FROM ghcr.io/ublue-os/aurora-dx-nvidia-open:stable
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=akmods,source=/rpms,target=/akmods-rpms \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

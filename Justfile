@@ -123,7 +123,7 @@ build $target_image=image_name $tag=default_tag:
 
     # The OpenRazer kernel module comes from Universal Blue's akmods image and
     # has to match the base image's kernel exactly, so look that kernel up.
-    BASE_IMAGE="$(awk '/^FROM ghcr.io\/ublue-os\// {print $2; exit}' Containerfile)"
+    BASE_IMAGE="$(awk '/^FROM ghcr.io\/ublue-os\// && !/akmods/ {print $2; exit}' Containerfile)"
     KERNEL="$(skopeo inspect --no-tags --retry-times 3 "docker://${BASE_IMAGE}" | jq -r '.Labels["ostree.linux"]')"
     if [[ -z "${KERNEL}" || "${KERNEL}" == "null" ]]; then
         echo "Could not read the kernel version of ${BASE_IMAGE}" >&2
