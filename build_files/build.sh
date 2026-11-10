@@ -310,6 +310,15 @@ systemctl mask plasma-setup.service
 touch /etc/plasma-setup-done
 systemctl list-unit-files 'plasma-setup*' || true
 
+# KDE's Welcome Center (with Aurora's pages) also opens at first login, on
+# top of Darkn's wizard. Stop it from starting by itself; it stays in the
+# app menu.
+for entry in /etc/xdg/autostart/*plasma-welcome*.desktop /usr/share/autostart/*plasma-welcome*.desktop; do
+    [ -f "$entry" ] || continue
+    grep -q '^Hidden=' "$entry" && sed -i 's/^Hidden=.*/Hidden=true/' "$entry" || echo 'Hidden=true' >>"$entry"
+done
+ls /etc/xdg/autostart/ | grep -i welcome || true
+
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same
 # way Aurora verifies its own images.

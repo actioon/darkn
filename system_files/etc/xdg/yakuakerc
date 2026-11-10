@@ -1,0 +1,3 @@
+# Darkn OS: start the drop-down terminal hidden; F12 shows it.
+[Dialogs]
+FirstRun=false
