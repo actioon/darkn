@@ -6,8 +6,8 @@ apps and developer tools to install, and backups. Nothing is installed unless
 it is chosen here. The choices are saved under ~/.config/darkn and the apps
 are installed by /usr/libexec/darkn-installer, whose progress is shown live.
 
-  darkn-welcome              open the wizard (also reachable as darkn-setup)
-  darkn-welcome --autostart  open it only if setup was never finished
+  darkn-welcome              open the wizard, maximized (also reachable as darkn-setup)
+  darkn-welcome --autostart  first login: open it full screen, and only if setup was never finished
 """
 
 import json
@@ -31,14 +31,14 @@ DONE_FILE = CONFIG_DIR / "welcome-done"
 if __name__ == "__main__" and "--autostart" in sys.argv[1:] and DONE_FILE.exists():
     sys.exit(0)
 
-from PyQt6.QtCore import QByteArray, QPointF, QProcess, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, QEvent, QPointF, QProcess, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QGuiApplication, QIcon, QImage, QImageReader, QLinearGradient, QPainter,
-    QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QFont, QGuiApplication, QIcon, QImage, QImageReader, QKeySequence, QLinearGradient,
+    QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
-    QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QFileDialog, QFrame, QGridLayout,
+    QAbstractButton, QAbstractItemView, QApplication, QBoxLayout, QButtonGroup, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyleOption, QVBoxLayout, QWidget,
 )
@@ -684,10 +684,25 @@ RADIUS = 24
 MARGIN = 26
 RAIL_WIDTH = 252
 
+
+def card_size(width, height):
+    """Size of the glass card in a window of the given size.
+
+    A small window is filled up to a thin margin. On a big screen the card
+    stays a centred panel, so pages keep comfortable line lengths; it grows
+    a little with the screen but never stretches from edge to edge.
+    """
+    widest = max(1560, min(1720, int(width * 0.64)))
+    tallest = max(900, min(1040, int(height * 0.70)))
+    return min(width - 2 * MARGIN, widest), min(height - 2 * MARGIN, tallest)
+
 ICONS = {
     "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     "x": '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     "dot": '<circle cx="12" cy="12" r="2.6"/>',
+    "circle": '<circle cx="12" cy="12" r="8.5"/>',
+    "check-circle": '<circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.3"/>',
+    "shrink": '<path d="M9.5 4.5v5h-5M14.5 4.5v5h5M9.5 19.5v-5h-5M14.5 19.5v-5h5"/>',
     "search": '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
     "down": '<path d="M6 9.5l6 6 6-6"/>',
     "right": '<path d="M9.5 6l6 6-6 6"/>',
@@ -792,13 +807,16 @@ def style_sheet():
     QLabel#warn {{ color: {WARN}; }}
     QLabel#bad {{ color: {BAD}; font-size: 12px; }}
     QLabel#mono {{ font-family: "JetBrains Mono", "Noto Sans Mono", "Cascadia Mono", monospace; font-size: 13px; }}
-    QLabel#chip {{ background: {white(16)}; border: 1px solid {white(20)}; border-radius: 11px;
-                   padding: 4px 10px; font-size: 12px; }}
+    QLabel#pill {{ background: rgba(0, 0, 0, 50); border: 1px solid {white(24)}; border-radius: 13px;
+                   padding: 5px 12px; font-size: 12px; }}
+    QLabel#badge {{ background: rgba(0, 0, 0, 50); border: 1px solid {white(22)}; border-radius: 9px;
+                    padding: 1px 8px; font-size: 11px; color: {MUTED}; }}
 
     QFrame#tile {{ background: {white(13)}; border: 1px solid {white(22)}; border-radius: 14px; }}
     QFrame#well {{ background: rgba(0, 0, 0, 46); border: 1px solid {white(16)}; border-radius: 10px; }}
     QFrame#iconTile {{ background: {white(18)}; border: 1px solid {white(24)}; border-radius: 10px; }}
     QFrame#divider {{ background: {white(18)}; max-height: 1px; border: none; }}
+    QFrame#cell {{ background: {white(10)}; border: 1px solid {white(17)}; border-radius: 9px; }}
     QFrame#segmented {{ background: rgba(0, 0, 0, 40); border: 1px solid {white(20)}; border-radius: 11px; }}
 
     QLineEdit {{ background: {white(14)}; border: 1px solid {white(24)}; border-radius: 10px;
@@ -813,6 +831,11 @@ def style_sheet():
     QPushButton#primary:hover {{ background: #ffffff; }}
     QPushButton#primary:disabled {{ background: {white(40)}; color: rgba(17, 17, 18, 150); }}
     QPushButton#nav {{ padding: 10px 18px; }}
+    QPushButton#small {{ padding: 6px 13px; font-size: 12px; border-radius: 9px; }}
+    QPushButton#mini {{ padding: 4px 12px; font-size: 12px; border-radius: 8px; }}
+    QPushButton#ghost {{ background: transparent; border: none; border-radius: 8px; padding: 6px; }}
+    QPushButton#ghost:hover {{ background: {white(28)}; }}
+    QPushButton#ghost:pressed {{ background: {white(44)}; }}
     QPushButton#link {{ background: transparent; border: none; color: {MUTED}; padding: 4px 8px; border-radius: 7px; }}
     QPushButton#link:hover {{ background: {white(20)}; color: {TEXT}; }}
     QPushButton#segment {{ background: transparent; border: none; border-radius: 8px; padding: 7px 16px;
@@ -873,8 +896,9 @@ class Backdrop:
 
     def __init__(self):
         image = self._load()
-        self.soft = blurred(image, 1)
-        self.frost = blurred(image, 5)
+        small = image.scaled(640, 640, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self.soft = blurred(image, 2)   # around the card: still recognisable
+        self.frost = blurred(small, 5)  # behind the card: only light and colour
         # Bright wallpapers are darkened more, so text on the glass stays readable.
         mean = image.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
                             Qt.TransformationMode.SmoothTransformation).pixelColor(0, 0)
@@ -886,7 +910,8 @@ class Backdrop:
         if path:
             reader = QImageReader(str(path))
             if reader.size().isValid():
-                reader.setScaledSize(reader.size().scaled(640, 640, Qt.AspectRatioMode.KeepAspectRatio))
+                # Enough detail for a full-screen backdrop, small enough to blur cheaply.
+                reader.setScaledSize(reader.size().scaled(1600, 1600, Qt.AspectRatioMode.KeepAspectRatio))
             image = reader.read()
             if not image.isNull():
                 return image.convertToFormat(QImage.Format.Format_RGB32)
@@ -902,6 +927,21 @@ class Backdrop:
         painter.fillRect(image.rect(), glow)
         painter.end()
         return image
+
+    @staticmethod
+    def _shadow(size, card):
+        """A soft shadow under the card: drawn tiny, then enlarged, which blurs it."""
+        shrink = max(8, min(24, int(card.left()) // 3))  # a wider shadow when the card floats on a big screen
+        small = QImage(size.width() // shrink + 1, size.height() // shrink + 1, QImage.Format.Format_ARGB32_Premultiplied)
+        small.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(small)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(QRectF(card.left() / shrink, (card.top() + shrink / 2) / shrink, card.width() / shrink,
+                                       card.height() / shrink), RADIUS / shrink, RADIUS / shrink)
+        painter.end()
+        return small.scaled(size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
     def render(self, size, ratio, card, rail_width):
         """The whole static background for a window of `size`, as one pixmap."""
@@ -919,10 +959,7 @@ class Backdrop:
         cover(self.soft)
         painter.fillRect(full, QColor(6, 6, 9, int(55 + 130 * self.brightness)))
         painter.setPen(Qt.PenStyle.NoPen)
-        for spread in range(22, 0, -2):  # soft shadow under the card
-            painter.setBrush(QColor(0, 0, 0, 9))
-            painter.drawRoundedRect(card.adjusted(-spread, -spread + 6, spread, spread + 6),
-                                    RADIUS + spread, RADIUS + spread)
+        painter.drawImage(full, self._shadow(size, card))
 
         shape = QPainterPath()
         shape.addRoundedRect(card, RADIUS, RADIUS)
@@ -1004,9 +1041,9 @@ def section(text):
     return widget
 
 
-def glyph(name, color=TEXT, size=18):
+def glyph(name, color=TEXT, size=18, width=1.7):
     widget = QLabel()
-    widget.setPixmap(pixmap(name, color, size))
+    widget.setPixmap(pixmap(name, color, size, width))
     widget.setFixedSize(size, size)
     return widget
 
@@ -1060,11 +1097,11 @@ def tile(layout, name="tile"):
     return frame
 
 
-def button(text, icon_name=None, name=None, color=TEXT):
+def button(text, icon_name=None, name=None, color=TEXT, icon_size=16):
     widget = QPushButton(text)
     if icon_name:
-        widget.setIcon(icon(icon_name, color, 16))
-        widget.setIconSize(QSize(16, 16))
+        widget.setIcon(icon(icon_name, color, icon_size))
+        widget.setIconSize(QSize(icon_size, icon_size))
     if name:
         widget.setObjectName(name)
     widget.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1083,6 +1120,60 @@ def scrolled(layout):
     inner.setAutoFillBackground(False)
     area.viewport().setAutoFillBackground(False)
     return area
+
+
+class TileGrid(QWidget):
+    """A grid of tiles that uses more columns when it has the room."""
+
+    def __init__(self, min_width, choices=(2, 3), spacing=8):
+        super().__init__()
+        self.min_width = min_width  # narrowest a column may get
+        self.choices = choices      # allowed numbers of columns
+        self.columns = min(choices)
+        self.items = []
+        self.fillers = [QWidget(self) for _ in range(max(choices) - 1)]  # stand in for missing tiles in a short row
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(spacing)
+
+    def set_items(self, widgets):
+        """Show exactly these widgets, in this order; others shown before are hidden."""
+        for old in self.items:
+            self.grid.removeWidget(old)
+            if old not in widgets:
+                old.hide()
+        self.items = list(widgets)
+        self._arrange()
+
+    def count(self):
+        return len(self.items)
+
+    def fit(self, width):
+        """How many columns fit in a width."""
+        gap = self.grid.horizontalSpacing()
+        fitting = [n for n in self.choices if n * self.min_width + (n - 1) * gap <= width]
+        return max(fitting) if fitting else min(self.choices)
+
+    def _arrange(self):
+        for item in self.items + self.fillers:
+            self.grid.removeWidget(item)
+        for n, item in enumerate(self.items):
+            self.grid.addWidget(item, n // self.columns, n % self.columns)
+            item.show()
+        for n, filler in enumerate(self.fillers):
+            index = len(self.items) + n
+            needed = bool(self.items) and index < self.columns
+            filler.setVisible(needed)
+            if needed:
+                self.grid.addWidget(filler, 0, index)
+        for index in range(max(self.choices)):
+            self.grid.setColumnStretch(index, 1 if index < self.columns else 0)
+
+    def resizeEvent(self, event):
+        columns = self.fit(event.size().width())
+        if columns != self.columns:
+            self.columns = columns
+            self._arrange()
 
 
 class Elided(QLabel):
@@ -1412,26 +1503,34 @@ class WelcomePage(Page):
         ]
         grid = QGridLayout()
         grid.setSpacing(12)
+        self.cards = []
         for n, (icon_name, head, text) in enumerate(features):
-            box = column(row(icon_tile(icon_name, 40), None), 8, label(head, "heading"),
-                         label(text, "muted", wrap=True), None, spacing=3, margins=(18, 18, 18, 16))
-            grid.addWidget(tile(box), n // 2, n % 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+            box = column(row(icon_tile(icon_name, 42), None), None, 8, label(head, "heading"),
+                         label(text, "muted", wrap=True), spacing=3, margins=(20, 20, 20, 18))
+            self.cards.append(tile(box))
+            grid.addWidget(self.cards[-1], n // 2, n % 2)
+            grid.setColumnStretch(n % 2, 1)
 
         self.net_icon = QLabel()
         self.net_icon.setFixedSize(18, 18)
         self.net_title = label("Checking the internet connection", "rowTitle")
         self.net_text = label("Apps are downloaded in the last step.", "small", wrap=True)
-        network = tile(row(self.net_icon, (column(self.net_title, self.net_text, spacing=1), 1),
-                           spacing=13, margins=(16, 12, 16, 12)))
-        self.setLayout(column((scrolled(column(grid, 2, network, None, spacing=12)), 1)))
+        self.network = tile(row(self.net_icon, (column(self.net_title, self.net_text, spacing=1), 1),
+                                spacing=13, margins=(20, 12, 16, 12)))
+        self.setLayout(column((scrolled(column(grid, 2, self.network, None, spacing=12)), 1)))
 
         self.timer = QTimer(self)
         self.timer.setInterval(6000)
         self.timer.timeout.connect(self.check)
         self.checking = False
         self._set_network(None)
+
+    def resizeEvent(self, event):
+        # The cards grow with the page, within reason, so a big screen is not left half empty.
+        spare = event.size().height() - self.network.sizeHint().height() - 52
+        for card in self.cards:
+            card.setFixedHeight(max(128, min(250, spare // 2)))
+        super().resizeEvent(event)
 
     def on_show(self):
         self.check()
@@ -1489,11 +1588,11 @@ class LanguagePage(Page):
             grid.setColumnStretch(col, 1)
 
         self.switcher = Segmented([(s[0], s[1]) for s in SWITCHERS], switcher)
-        note = label("Meta + Space always switches layouts as well.", "small")
+        note = label("Meta + Space always switches layouts as well.", "small", wrap=True)
         self.setLayout(column((scrolled(column(
             section("System language"), language, 10,
             section("Keyboard layouts"), grid, 10,
-            section("Switch layouts with"), row(self.switcher, note, None, spacing=14), None, spacing=9)), 1)))
+            section("Switch layouts with"), row(self.switcher, None), note, None, spacing=9)), 1)))
 
     def layouts(self):
         return [key for key, choice in self.choices.items() if key == "us" or choice.isChecked()]
@@ -1718,10 +1817,10 @@ class CatalogPage(Page):
         self.search.setClearButtonEnabled(True)
         self.search.setFixedWidth(280)
         self.search.textChanged.connect(self._filter)
-        self.count = label("", "muted")
-        everything = button("Select all", name="link")
+        self.count = label("", "pill")
+        everything = button("Select all", "check-circle", "small", icon_size=14)
         everything.clicked.connect(lambda: self._set_all(self.tiles.values(), True))
-        nothing = button("Select none", name="link")
+        nothing = button("Select none", "circle", "small", icon_size=14)
         nothing.clicked.connect(lambda: self._set_all(self.tiles.values(), False))
         self.empty = label("Nothing matches the search." if groups else "The app catalog could not be read.", "muted")
         self.empty.setVisible(not groups)
@@ -1738,28 +1837,25 @@ class CatalogPage(Page):
                 app.toggled.connect(self._changed)
                 self.tiles[item["id"]] = app
                 tiles.append(app)
-            count = label("", "small")
-            all_on = button("All", name="link")
+            count = label("", "badge")
+            all_on = button("All", name="mini")
             all_on.clicked.connect(lambda _on=False, t=tiles: self._set_all(t, True))
-            all_off = button("None", name="link")
+            all_off = button("None", name="mini")
             all_off.clicked.connect(lambda _on=False, t=tiles: self._set_all(t, False))
-            words = column(label(group["name"], "heading"), Elided(group.get("description", ""), "small"), spacing=1)
+            words = column(row(label(group["name"], "heading"), count, None, spacing=9),
+                           Elided(group.get("description", ""), "small"), spacing=2)
             header = QWidget()
-            header.setLayout(row(icon_tile(CATEGORY_ICONS.get(group["id"], "box"), 34), (words, 1), count, 4,
+            header.setLayout(row(icon_tile(CATEGORY_ICONS.get(group["id"], "box"), 36), 6, (words, 1), 10,
                                  all_on, all_off, spacing=6, margins=(0, 8, 0, 0)))
-            grid = QGridLayout()
-            grid.setSpacing(8)
-            grid.setColumnStretch(0, 1)
-            grid.setColumnStretch(1, 1)
-            for n, app in enumerate(tiles):
-                grid.addWidget(app, n // 2, n % 2)
+            grid = TileGrid(310, (2, 3))
+            grid.set_items(tiles)
             body.addWidget(header)
-            body.addLayout(grid)
+            body.addWidget(grid)
             self.groups.append((group, header, grid, tiles, count))
         body.addWidget(self.empty)
         body.addStretch(1)
 
-        top = row(self.search, None, self.count, 6, everything, nothing, spacing=4)
+        top = row(self.search, 6, self.count, None, everything, nothing, spacing=6)
         self.setLayout(column(top, (scrolled(body), 1), spacing=10))
         self._changed()
 
@@ -1782,11 +1878,8 @@ class CatalogPage(Page):
         anything = False
         for _group, header, grid, tiles, _count in self.groups:
             shown = [app for app in tiles if all(word in app.words for word in words)]
-            for app in tiles:
-                grid.removeWidget(app)
-                app.setVisible(app in shown)
-            for n, app in enumerate(shown):
-                grid.addWidget(app, n // 2, n % 2)
+            grid.set_items(shown)
+            grid.setVisible(bool(shown))
             header.setVisible(bool(shown))
             anything = anything or bool(shown)
         self.empty.setVisible(not anything)
@@ -1814,14 +1907,36 @@ class DeveloperPage(CatalogPage):
     noun = "tool"
 
     def __init__(self, wizard, groups, selected):
-        half = (len(SYSTEM_TOOLS) + 1) // 2
-        chips = column(row(*[label(t, "chip") for t in SYSTEM_TOOLS[:half]], None, spacing=6),
-                       row(*[label(t, "chip") for t in SYSTEM_TOOLS[half:]], None, spacing=6), spacing=6)
         words = column(label("Already part of the system", "heading"),
-                       label("These come with Darkn OS; there is nothing to install.", "small"), spacing=1)
-        intro = tile(column(row(icon_tile("check", 34, GOOD), (words, 1), spacing=12), 4, chips, spacing=6,
-                            margins=(14, 13, 14, 14)))
-        super().__init__(wizard, groups, selected, intro)
+                       label("These come with Darkn OS; there is nothing to install.", "small", wrap=True),
+                       None, spacing=3)
+        about = QWidget()
+        about.setLayout(row(column(icon_tile("check", 36, GOOD), None), (words, 1), spacing=12))
+        tools = QGridLayout()  # three even columns: the nine tools fill the card at any width
+        tools.setSpacing(6)
+        for n, tool in enumerate(SYSTEM_TOOLS):
+            cell = tile(row(glyph("check", GOOD, 14, 2.2), label(tool), None, spacing=9, margins=(11, 6, 10, 6)), "cell")
+            tools.addWidget(cell, n // 3, n % 3)
+            tools.setColumnStretch(n % 3, 1)
+        box = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        box.setContentsMargins(14, 14, 14, 14)
+        box.setSpacing(18)
+        fill(box, [about, (tools, 1)])
+        super().__init__(wizard, groups, selected, tile(box))
+        self.about, self.intro_box = about, box
+        self._arrange_intro(self.width())
+
+    def _arrange_intro(self, width):
+        """Text beside the tools when there is room, above them in a narrow window."""
+        stacked = width < 720
+        self.intro_box.setDirection(QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight)
+        self.intro_box.setSpacing(12 if stacked else 18)
+        self.about.setMinimumWidth(0 if stacked else 258)
+        self.about.setMaximumWidth(16777215 if stacked else 258)
+
+    def resizeEvent(self, event):
+        self._arrange_intro(event.size().width())
+        super().resizeEvent(event)
 
 
 class BackupPage(Page):
@@ -2036,10 +2151,7 @@ class InstallPage(Page):
         self.retry = False
 
         # review
-        self.cards = QGridLayout()
-        self.cards.setSpacing(12)
-        self.cards.setColumnStretch(0, 1)
-        self.cards.setColumnStretch(1, 1)
+        self.cards = TileGrid(340, (2, 3), spacing=12)
         self.notice_icon = QLabel()
         self.notice_icon.setFixedSize(18, 18)
         self.notice = label("", "muted", wrap=True)
@@ -2125,9 +2237,10 @@ class InstallPage(Page):
         return True
 
     def _build_review(self):
-        while self.cards.count():
-            self.cards.takeAt(0).widget().deleteLater()
+        for old in self.cards.items:
+            old.deleteLater()
         wizard = self.wizard
+        tiles = []
         cards = [
             ("keyboard", "Keyboard", wizard.language, wizard.language.summary()),
             ("clock", "Region and time", wizard.region, wizard.region.summary()),
@@ -2136,12 +2249,12 @@ class InstallPage(Page):
             ("shield", "Backups", wizard.backup, wizard.backup.summary()),
             ("monitor", "Graphics", wizard.hardware, wizard.hardware.summary()),
         ]
-        for n, (icon_name, head, page, (main, sub)) in enumerate(cards):
+        for icon_name, head, page, (main, sub) in cards:
             change = button("Change", name="link")
             change.clicked.connect(lambda _on=False, p=page: wizard.go(wizard.pages.index(p)))
             words = column(row(label(head, "small"), None), Elided(main, "heading"), Elided(sub, "small"), spacing=2)
-            self.cards.addWidget(tile(row(icon_tile(icon_name), (words, 1), change, spacing=13, margins=(14, 13, 8, 13))),
-                                 n // 2, n % 2)
+            tiles.append(tile(row(icon_tile(icon_name), (words, 1), change, spacing=13, margins=(14, 13, 8, 13))))
+        self.cards.set_items(tiles)
         if wizard.online is False:
             self.notice_icon.setPixmap(pixmap("wifi-off", WARN))
             self.notice.setText("There is no internet connection right now. Your settings are applied either way; "
@@ -2491,10 +2604,10 @@ class Wizard(QWidget):
             self.rail.append(item)
             steps.addWidget(item)
         foot = label("Everything here can be changed later in System Settings.", "faint", wrap=True)
-        rail = QWidget()
-        rail.setFixedWidth(RAIL_WIDTH)
-        rail.setLayout(column(brand, 22, steps, None, row(foot, margins=(11, 0, 8, 0)), spacing=0,
-                              margins=(16, 24, 16, 22)))
+        self.rail_side = QWidget()
+        self.rail_side.setFixedWidth(RAIL_WIDTH)
+        self.rail_side.setLayout(column(brand, 22, steps, None, row(foot, margins=(11, 0, 8, 0)), spacing=0,
+                                        margins=(16, 24, 16, 22)))
 
         # page side
         self.heading = label("", "title")
@@ -2510,19 +2623,75 @@ class Wizard(QWidget):
         self.back_button.setFixedHeight(40)
         self.next_button.setFixedHeight(40)
         footer = row(None, self.back_button, self.next_button, spacing=10)
-        side = column(self.heading, self.subheading, 18, (self.stack, 1), 14, footer, spacing=5,
-                      margins=(34, 30, 30, 24))
+        self.page_side = column(self.heading, self.subheading, 18, (self.stack, 1), 14, footer, spacing=5,
+                                margins=(34, 30, 30, 24))
+        self.setLayout(row(self.rail_side, (self.page_side, 1), spacing=0, margins=(MARGIN, MARGIN, MARGIN, MARGIN)))
 
-        self.setLayout(row(rail, (side, 1), spacing=0, margins=(MARGIN, MARGIN, MARGIN, MARGIN)))
+        # Full screen has no title bar, so the card carries its own way out.
+        smaller = button("", "shrink", "ghost", MUTED)
+        smaller.setToolTip("Leave full screen (Esc)")
+        smaller.clicked.connect(self.leave_full_screen)
+        closer = button("", "x", "ghost", MUTED)
+        closer.setToolTip("Close")
+        closer.clicked.connect(self.close)
+        self.controls = QWidget(self)
+        self.controls.setLayout(row(smaller, closer, spacing=2))
+        self.controls.adjustSize()
+        self.controls.hide()
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self.leave_full_screen)
+        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self.toggle_full_screen)
         self.go(0)
 
-    # painting
+    # size and painting
+
+    def present(self, full_screen):
+        """Show the window: full screen as the first-run experience, otherwise maximized."""
+        if full_screen:
+            self.showFullScreen()
+        else:
+            self.showMaximized()
+
+    def leave_full_screen(self):
+        if self.isFullScreen():
+            self.showMaximized()
+
+    def toggle_full_screen(self):
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
+
+    def card_rect(self):
+        """Where the glass card sits: centred, on whole pixels."""
+        width, height = card_size(self.width(), self.height())
+        return QRectF((self.width() - width) // 2, (self.height() - height) // 2, width, height)
+
+    def _fit_card(self):
+        card = self.card_rect()
+        left, top = int(card.left()), int(card.top())
+        self.layout().setContentsMargins(left, top, self.width() - left - int(card.width()),
+                                         self.height() - top - int(card.height()))
+        roomy = card.width() >= 1400  # a big card gets a wider rail and more air around the page
+        self.rail_side.setFixedWidth(RAIL_WIDTH + 24 if roomy else RAIL_WIDTH)
+        self.rail_side.layout().setContentsMargins(*((24, 34, 24, 30) if roomy else (16, 24, 16, 22)))
+        self.page_side.setContentsMargins(*((48, 40, 46, 34) if roomy else (34, 30, 30, 24)))
+        self.controls.setVisible(self.isFullScreen())
+        self.controls.move(int(card.right()) - self.controls.width() - 12, top + 10)
+        self.controls.raise_()
+
+    def resizeEvent(self, event):
+        self._fit_card()
+        super().resizeEvent(event)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "controls"):
+            self._fit_card()
+        super().changeEvent(event)
 
     def paintEvent(self, _event):
         ratio = self.devicePixelRatioF()
         if self.canvas is None or self.canvas.size() != self.size() * ratio:
-            card = QRectF(self.rect()).adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
-            self.canvas = self.backdrop.render(self.size(), ratio, card, RAIL_WIDTH)
+            self.canvas = self.backdrop.render(self.size(), ratio, self.card_rect(), self.rail_side.width())
         painter = QPainter(self)
         painter.drawPixmap(0, 0, self.canvas)
         painter.end()
@@ -2665,7 +2834,7 @@ def main():
     app = QApplication(sys.argv)
     setup_app(app)
     window = Wizard()
-    window.show()
+    window.present(full_screen="--autostart" in sys.argv[1:])
     status = app.exec()
     if not wait_for_workers(3000):
         os._exit(status)  # a probe is still stuck (a password prompt, a dead network): do not wait for it
