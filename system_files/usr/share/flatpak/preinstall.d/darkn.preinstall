@@ -3,12 +3,47 @@
 # online, always at the latest Flathub version. Removing an app afterwards is
 # respected: Flatpak does not reinstall it.
 
-# --- Browsers ---
+# --- Desktop basics ---
+# Aurora's own ISO installs these, but they are not part of the image, so a
+# Darkn OS install has to ask for them itself.
+[Flatpak Preinstall org.kde.haruna]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.kde.gwenview]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.kde.okular]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.kde.kcalc]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall com.github.tchx84.Flatseal]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall io.github.flattool.Warehouse]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall io.missioncenter.MissionCenter]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.fkoehler.KTailctl]
+Branch=stable
+IsRuntime=false
+
+# --- Browsers (Brave is the default, see /etc/xdg/mimeapps.list) ---
 [Flatpak Preinstall com.brave.Browser]
 Branch=stable
 IsRuntime=false
 
-[Flatpak Preinstall com.google.Chrome]
+[Flatpak Preinstall org.mozilla.firefox]
 Branch=stable
 IsRuntime=false
 
@@ -51,7 +86,7 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
-# --- Media (Haruna, the default player, already ships with Aurora) ---
+# --- Media (Haruna, the default player, is listed under Desktop basics) ---
 [Flatpak Preinstall org.videolan.VLC]
 Branch=stable
 IsRuntime=false
