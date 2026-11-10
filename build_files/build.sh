@@ -301,6 +301,15 @@ find /usr/libexec /usr/bin -maxdepth 1 -name '__pycache__' -exec rm -rf {} +
 command -v restic
 command -v lspci
 
+# KDE's own first-boot screen (Plasma Setup, shown with Aurora's artwork)
+# asks for language, keyboard, theme, host name and time before login.
+# The installer already creates the user and Darkn's wizard covers the rest,
+# so switch it off instead of asking the same questions twice.
+systemctl disable plasma-setup.service 2>/dev/null || true
+systemctl mask plasma-setup.service
+touch /etc/plasma-setup-done
+systemctl list-unit-files 'plasma-setup*' || true
+
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same
 # way Aurora verifies its own images.
