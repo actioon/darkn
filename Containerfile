@@ -4,8 +4,11 @@ COPY build_files /
 COPY system_files /system_files
 
 # Base Image
-FROM ghcr.io/ublue-os/aurora:stable
+# Aurora Developer Experience with the NVIDIA open driver (RTX 3080):
+# ships VS Code, Docker and the NVIDIA kernel modules.
+FROM ghcr.io/ublue-os/aurora-dx-nvidia-open:stable
 ## Other possible base images include:
+# FROM ghcr.io/ublue-os/aurora:stable
 # FROM ghcr.io/ublue-os/bazzite:stable
 # FROM ghcr.io/ublue-os/bazzite:testing
 # FROM ghcr.io/ublue-os/bluefin-nvidia-open:stable

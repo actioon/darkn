@@ -1,0 +1,71 @@
+# Darkn OS default apps.
+# Installed automatically by flatpak-preinstall.service once the machine is
+# online, always at the latest Flathub version. Removing an app afterwards is
+# respected: Flatpak does not reinstall it.
+
+# --- Browsers ---
+[Flatpak Preinstall com.brave.Browser]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall com.google.Chrome]
+Branch=stable
+IsRuntime=false
+
+# --- Chat ---
+[Flatpak Preinstall org.telegram.desktop]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall com.discordapp.Discord]
+Branch=stable
+IsRuntime=false
+
+# WhatsApp has no official Linux app; ZapZap is the WhatsApp client on Flathub.
+[Flatpak Preinstall com.rtosta.zapzap]
+Branch=stable
+IsRuntime=false
+
+# --- Notes / office ---
+[Flatpak Preinstall md.obsidian.Obsidian]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.onlyoffice.desktopeditors]
+Branch=stable
+IsRuntime=false
+
+# --- Media (Haruna, the default player, already ships with Aurora) ---
+[Flatpak Preinstall org.videolan.VLC]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.audacityteam.Audacity]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall fr.handbrake.ghb]
+Branch=stable
+IsRuntime=false
+
+# --- Development ---
+[Flatpak Preinstall com.google.AndroidStudio]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall net.portswigger.BurpSuite-Community]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall net.poedit.Poedit]
+Branch=stable
+IsRuntime=false
+
+# --- Gaming ---
+[Flatpak Preinstall com.valvesoftware.Steam]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall com.heroicgameslauncher.hgl]
+Branch=stable
+IsRuntime=false

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Adds every administrator (wheel) account to the groups needed to use Docker
+# and virtual machines without sudo. Safe to run on every boot.
+
+set -uo pipefail
+
+GROUPS_TO_ADD=(docker libvirt)
+
+mapfile -t admins < <(getent group wheel | cut -d: -f4 | tr ',' '\n' | grep -v '^$')
+[[ ${#admins[@]} -eq 0 ]] && exit 0
+
+for group in "${GROUPS_TO_ADD[@]}"; do
+    # Groups shipped in the image live in /usr/lib/group; usermod needs them in /etc/group.
+    if ! grep -q "^${group}:" /etc/group; then
+        grep "^${group}:" /usr/lib/group >>/etc/group 2>/dev/null || continue
+    fi
+    for user in "${admins[@]}"; do
+        id -nG "$user" 2>/dev/null | tr ' ' '\n' | grep -qx "$group" || usermod -aG "$group" "$user"
+    done
+done
+exit 0

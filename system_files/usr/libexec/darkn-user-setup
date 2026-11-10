@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# Darkn OS per-user setup.
+#
+# Installs the developer tools that live in the user's home directory
+# (Homebrew apps and CLIs, npm globals, Rust, Flutter, T3 Code, VS Code
+# extensions). Everything is downloaded at its latest version, so this needs
+# a network connection; it waits for one and retries on later logins.
+#
+# Each step is recorded under ~/.local/share/darkn/setup so it runs only once.
+# Bump a step's version number below to make it run again after an update.
+#
+#   darkn-user-setup            run pending steps
+#   darkn-user-setup --reset    forget all recorded steps, then run them again
+#   darkn-user-setup --status   show what has been done
+
+set -uo pipefail
+
+STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/darkn/setup"
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/darkn"
+LOG_FILE="${LOG_DIR}/setup.log"
+DATA_DIR="/usr/share/darkn"
+MAX_ATTEMPTS=5
+
+BREW="/home/linuxbrew/.linuxbrew/bin/brew"
+export NPM_CONFIG_PREFIX="${HOME}/.local"
+export FLUTTER_ROOT="${HOME}/.local/share/flutter"
+export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${FLUTTER_ROOT}/bin:${PATH}"
+export HOMEBREW_NO_ENV_HINTS=1
+export HOMEBREW_NO_ANALYTICS=1
+
+mkdir -p "$STATE_DIR" "$LOG_DIR" "${HOME}/.local/bin"
+
+log() { printf '%s  %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG_FILE"; }
+
+notify() {
+    command -v notify-send >/dev/null 2>&1 || return 0
+    notify-send --app-name="Darkn OS" --icon=system-software-install "$1" "$2" 2>/dev/null || true
+}
+
+# Lines of a list file, without comments and blanks.
+read_list() { grep -v -E '^[[:space:]]*(#|$)' "$1"; }
+
+wait_for_network() {
+    local i
+    for i in $(seq 1 60); do
+        curl -fsS --max-time 10 -o /dev/null https://github.com && return 0
+        sleep 10
+    done
+    return 1
+}
+
+# --- steps -----------------------------------------------------------------
+
+step_brew() {
+    [[ -x "$BREW" ]] || { log "Homebrew is not ready yet"; return 1; }
+    eval "$("$BREW" shellenv)"
+    /usr/libexec/ublue-brew-trust-brewfile "${DATA_DIR}/darkn.Brewfile" || return 1
+    brew bundle --file="${DATA_DIR}/darkn.Brewfile"
+}
+
+step_npm() {
+    command -v npm >/dev/null 2>&1 || { log "npm not found"; return 1; }
+    local pkgs
+    mapfile -t pkgs < <(read_list "${DATA_DIR}/npm-globals.list")
+    [[ ${#pkgs[@]} -eq 0 ]] && return 0
+    npm install -g "${pkgs[@]}"
+}
+
+step_rust() {
+    if [[ -x "${HOME}/.cargo/bin/rustup" ]]; then
+        "${HOME}/.cargo/bin/rustup" update stable
+        return
+    fi
+    command -v rustup-init >/dev/null 2>&1 || { log "rustup-init not found"; return 1; }
+    rustup-init -y --no-modify-path --default-toolchain stable --component rust-analyzer
+}
+
+step_flutter() {
+    if [[ ! -d "${FLUTTER_ROOT}/.git" ]]; then
+        rm -rf "${FLUTTER_ROOT}"
+        git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "${FLUTTER_ROOT}" || return 1
+    fi
+    "${FLUTTER_ROOT}/bin/flutter" --disable-analytics >/dev/null 2>&1 || true
+    # Downloads the Dart SDK and verifies the install.
+    "${FLUTTER_ROOT}/bin/flutter" --version
+}
+
+step_t3code() {
+    local app_dir="${HOME}/Applications"
+    local app="${app_dir}/T3-Code.AppImage"
+    local url tmp
+    url="$(curl -fsSL https://api.github.com/repos/pingdotgg/t3code/releases/latest |
+        jq -r '.assets[] | select(.name | test("x86_64\\.AppImage$")) | .browser_download_url' | head -n1)"
+    [[ -n "$url" && "$url" != "null" ]] || { log "no T3 Code AppImage found in the latest release"; return 1; }
+
+    mkdir -p "$app_dir" "${HOME}/.local/share/applications" "${HOME}/.local/share/icons"
+    tmp="$(mktemp "${app_dir}/.t3code.XXXXXX")"
+    if ! curl -fL --retry 3 -o "$tmp" "$url"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod +x "$tmp"
+    mv -f "$tmp" "$app"
+
+    # Best effort: pull the app icon out of the AppImage.
+    local icon="t3-code" work
+    work="$(mktemp -d)"
+    if (cd "$work" && "$app" --appimage-extract '*.png' >/dev/null 2>&1); then
+        local png
+        png="$(find "$work/squashfs-root" -maxdepth 1 -name '*.png' -type f | head -n1)"
+        if [[ -n "$png" ]]; then
+            cp -f "$png" "${HOME}/.local/share/icons/t3-code.png"
+            icon="${HOME}/.local/share/icons/t3-code.png"
+        fi
+    fi
+    rm -rf "$work"
+
+    cat >"${HOME}/.local/share/applications/t3-code.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=T3 Code
+Comment=Desktop app for coding agents
+Exec=${app} %U
+Icon=${icon}
+Terminal=false
+Categories=Development;
+EOF
+    ln -sf "$app" "${HOME}/.local/bin/t3-code"
+}
+
+step_vscode() {
+    command -v code >/dev/null 2>&1 || { log "VS Code not found"; return 1; }
+    local ext failed=0
+    while IFS= read -r ext; do
+        if ! code --install-extension "$ext" --force; then
+            log "extension failed: $ext"
+            failed=1
+        fi
+    done < <(read_list "${DATA_DIR}/vscode-extensions.list")
+    return "$failed"
+}
+
+# --- runner ----------------------------------------------------------------
+
+PENDING=0
+GAVE_UP=()
+
+# run_step <name> <version> <function>
+run_step() {
+    local name="$1" version="$2" fn="$3"
+    local stamp="${STATE_DIR}/${name}.done"
+    local tries_file="${STATE_DIR}/${name}.attempts"
+
+    if [[ -f "$stamp" && "$(cat "$stamp")" == "$version" ]]; then
+        return 0
+    fi
+
+    local tries=0
+    [[ -f "$tries_file" ]] && tries="$(cat "$tries_file")"
+    if (( tries >= MAX_ATTEMPTS )); then
+        GAVE_UP+=("$name")
+        return 0
+    fi
+
+    log "=== ${name}: starting (attempt $((tries + 1))/${MAX_ATTEMPTS})"
+    if "$fn" >>"$LOG_FILE" 2>&1; then
+        echo "$version" >"$stamp"
+        rm -f "$tries_file"
+        log "=== ${name}: done"
+    else
+        echo $((tries + 1)) >"$tries_file"
+        log "=== ${name}: FAILED"
+        if (( tries + 1 >= MAX_ATTEMPTS )); then
+            GAVE_UP+=("$name")
+        else
+            PENDING=1
+        fi
+    fi
+}
+
+STEPS=(
+    "brew 1 step_brew"
+    "npm 1 step_npm"
+    "rust 1 step_rust"
+    "flutter 1 step_flutter"
+    "t3code 1 step_t3code"
+    "vscode 1 step_vscode"
+)
+
+case "${1:-}" in
+    --reset)
+        rm -f "${STATE_DIR}"/*.done "${STATE_DIR}"/*.attempts
+        ;;
+    --status)
+        for s in "${STEPS[@]}"; do
+            read -r name version _ <<<"$s"
+            if [[ -f "${STATE_DIR}/${name}.done" && "$(cat "${STATE_DIR}/${name}.done")" == "$version" ]]; then
+                echo "${name}: done"
+            else
+                echo "${name}: pending (attempts: $(cat "${STATE_DIR}/${name}.attempts" 2>/dev/null || echo 0))"
+            fi
+        done
+        echo "log: ${LOG_FILE}"
+        exit 0
+        ;;
+esac
+
+# Nothing to do? Leave quietly.
+todo=0
+for s in "${STEPS[@]}"; do
+    read -r name version _ <<<"$s"
+    [[ -f "${STATE_DIR}/${name}.done" && "$(cat "${STATE_DIR}/${name}.done")" == "$version" ]] && continue
+    # Steps that already used up their attempts are not retried automatically.
+    (( $(cat "${STATE_DIR}/${name}.attempts" 2>/dev/null || echo 0) >= MAX_ATTEMPTS )) && continue
+    todo=1
+done
+(( todo == 0 )) && exit 0
+
+if ! wait_for_network; then
+    log "no network connection; will try again later"
+    exit 1
+fi
+
+notify "Darkn OS" "Installing your developer tools in the background. This can take a while."
+
+for s in "${STEPS[@]}"; do
+    read -r name version fn <<<"$s"
+    run_step "$name" "$version" "$fn"
+done
+
+if (( ${#GAVE_UP[@]} > 0 )); then
+    notify "Darkn OS" "Some tools could not be installed: ${GAVE_UP[*]}. See ${LOG_FILE}"
+fi
+
+if (( PENDING == 1 )); then
+    exit 1
+fi
+
+if (( ${#GAVE_UP[@]} == 0 )); then
+    notify "Darkn OS" "Developer tools are ready. Log out and back in to use them in new terminals."
+fi
+exit 0

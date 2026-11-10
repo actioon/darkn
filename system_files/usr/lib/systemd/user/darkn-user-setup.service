@@ -1,0 +1,17 @@
+[Unit]
+Description=Darkn OS developer tools setup for the current user
+Documentation=file:///usr/libexec/darkn-user-setup
+After=graphical-session.target ublue-user-setup.service
+ConditionUser=!@system
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-user-setup
+# Downloads can take a long time; never kill the run on a start timeout.
+TimeoutStartSec=infinity
+Restart=on-failure
+RestartSec=120
+Nice=10
+
+[Install]
+WantedBy=graphical-session.target

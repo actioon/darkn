@@ -1,0 +1,5 @@
+# Everything in this repo ends up inside a Linux image: always use LF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary

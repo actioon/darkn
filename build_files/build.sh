@@ -5,23 +5,72 @@ set -ouex pipefail
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
-### Install packages
+# Files are authored on Windows, so set the executable bits here.
+chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups
+ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
 
-# Packages can be installed from any enabled yum repo on the image.
-# RPMfusion repos are available by default in ublue main images
-# List of rpmfusion packages can be found here:
-# https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
+### Programming languages and build tools
+# The base image (aurora-dx-nvidia-open) already ships VS Code, Docker,
+# git, gh, android-tools and the NVIDIA driver. This adds the toolchains.
 
-# this installs a package from fedora repos
-dnf5 install -y tmux
+dnf5 install -y \
+    nodejs24 \
+    nodejs24-npm \
+    pnpm \
+    java-25-openjdk-devel \
+    dotnet-sdk-10.0 \
+    rustup \
+    gcc \
+    gcc-c++ \
+    clang \
+    gdb \
+    make \
+    cmake \
+    ninja-build \
+    pkgconf-pkg-config \
+    python3-pip \
+    uv \
+    kubernetes1.36-client \
+    sqlite \
+    ripgrep \
+    jq \
+    unzip \
+    zip \
+    xz \
+    fuse-libs
 
-# Use a COPR Example:
-#
-# dnf5 -y copr enable ublue-os/staging
-# dnf5 -y install package
-# Disable COPRs so they don't end up enabled on the final image:
-# dnf5 -y copr disable ublue-os/staging
+# Fedora ships versioned Node.js binaries (node-24). Make sure the plain
+# `node`, `npm` and `npx` commands exist.
+for tool in node npm npx; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        ln -s "/usr/bin/${tool}-24" "/usr/bin/${tool}"
+    fi
+done
 
-#### Example for enabling a System Unit File
-
+### Services
 systemctl enable podman.socket
+systemctl enable darkn-groups.service
+systemctl --global enable darkn-user-setup.service
+
+### Sanity checks: fail the build if a toolchain is missing
+node --version
+npm --version
+pnpm --version
+java -version
+javac -version
+dotnet --version
+gcc --version
+g++ --version
+cmake --version
+python3 --version
+uv --version
+kubectl version --client
+command -v rustup-init
+command -v code
+command -v docker
+command -v git
+command -v gh
+command -v flatpak
+bash -n /usr/libexec/darkn-user-setup
+bash -n /usr/libexec/darkn-groups
+test -x /usr/libexec/ublue-brew-trust-brewfile

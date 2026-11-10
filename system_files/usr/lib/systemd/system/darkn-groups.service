@@ -1,0 +1,12 @@
+[Unit]
+Description=Darkn OS: give administrators access to Docker and libvirt
+After=systemd-sysusers.service local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-groups
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
