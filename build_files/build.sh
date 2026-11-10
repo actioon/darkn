@@ -212,12 +212,19 @@ systemctl enable darkn-mount-ntfs.service
 dnf5 install -y openrgb i2c-tools
 
 # OpenRazer: the kernel module is the one Universal Blue builds and signs
-# for this exact kernel; the daemon comes from the OpenRazer project's repo,
-# which is then switched off so it is not used for anything else.
-dnf5 config-manager addrepo \
-    --from-repofile="https://download.opensuse.org/repositories/hardware:/razer/Fedora_$(rpm -E %fedora)/hardware:razer.repo"
-dnf5 install -y /akmods-rpms/kmods/*openrazer*.rpm openrazer-daemon
-dnf5 config-manager setopt hardware_razer.enabled=0
+# for this exact kernel. It was built against the Terra repository's
+# OpenRazer packages, so the matching daemon and common files come from
+# Terra too. The repository is used for this one install only (it is not
+# left configured), with Terra's signing key imported first.
+FEDORA_RELEASE="$(rpm -E %fedora)"
+curl -fsSL --retry 3 -o "/etc/pki/rpm-gpg/RPM-GPG-KEY-terra${FEDORA_RELEASE}" \
+    "https://raw.githubusercontent.com/terrapkg/packages/f${FEDORA_RELEASE}/anda/terra/gpg-keys/RPM-GPG-KEY-terra${FEDORA_RELEASE}"
+ls /akmods-rpms/kmods/ /akmods-rpms/common/ 2>/dev/null | grep -i razer || true
+dnf5 install -y \
+    --repofrompath "terra-darkn,https://repos.fyralabs.com/terra${FEDORA_RELEASE}" \
+    --setopt=terra-darkn.gpgcheck=1 \
+    --setopt="terra-darkn.gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra${FEDORA_RELEASE}" \
+    /akmods-rpms/kmods/*openrazer*.rpm openrazer-daemon
 KERNEL_VERSION="$(rpm -q kernel --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' | head -n1)"
 find "/usr/lib/modules/${KERNEL_VERSION}" -name 'razer*.ko*' | grep . >/dev/null
 
