@@ -9,6 +9,9 @@ ai.storyteller.artcraft-launcher
 ai.storyteller.photocraft
 ai.storyteller.vectorcraft
 
+# PDF reader and editor (Okular stays installed as the stable fallback)
+ai.storyteller.pdfcraft
+
 # Office (Word / Excel / PowerPoint counterparts)
 ai.storyteller.wordcraft
 ai.storyteller.gridcraft

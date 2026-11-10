@@ -10,7 +10,8 @@
 Branch=stable
 IsRuntime=false
 
-[Flatpak Preinstall org.kde.gwenview]
+# KDE Photos (Koko): gallery and image viewer, replaces Gwenview
+[Flatpak Preinstall org.kde.koko]
 Branch=stable
 IsRuntime=false
 
@@ -18,7 +19,8 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
-[Flatpak Preinstall org.kde.kcalc]
+# Qalculate!: scientific, programmer, unit and currency calculator, replaces KCalc
+[Flatpak Preinstall io.github.Qalculate.qalculate-qt]
 Branch=stable
 IsRuntime=false
 
