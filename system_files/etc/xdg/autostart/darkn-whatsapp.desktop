@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WhatsApp (ZapZap)
+Comment=Start ZapZap hidden in the tray at login
+Exec=flatpak run com.rtosta.zapzap --hideStart
+Icon=com.rtosta.zapzap
+Terminal=false
+X-KDE-autostart-phase=2

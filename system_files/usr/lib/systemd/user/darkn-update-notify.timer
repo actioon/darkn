@@ -1,0 +1,10 @@
+[Unit]
+Description=Darkn OS: daily update check
+
+[Timer]
+OnStartupSec=15min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target

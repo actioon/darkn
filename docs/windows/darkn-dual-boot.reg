@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+
+; Darkn OS dual boot helper. Run this once in Windows (double-click, then Yes).
+
+; 1) Keep the hardware clock in UTC, like Linux does, so the time stops
+;    jumping by hours every time you switch between the two systems.
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\TimeZoneInformation]
+"RealTimeIsUniversal"=dword:00000001
+
+; 2) Turn off Fast Startup. With it on, Windows only hibernates at shutdown
+;    and leaves its drives locked, so Linux can open them read-only at best.
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Power]
+"HiberbootEnabled"=dword:00000000

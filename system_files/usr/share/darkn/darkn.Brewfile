@@ -31,3 +31,6 @@ brew "sqlcmd"
 tap "supabase/tap"
 brew "supabase/tap/supabase"
 brew "cloudflared"
+
+# Terminal prompt that shows the git branch and project status
+brew "starship"

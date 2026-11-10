@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+MimeType=inode/directory;
+Actions=darknOpenCode;
+
+[Desktop Action darknOpenCode]
+Name=Open in VS Code
+Name[ar]=فتح في VS Code
+Icon=code
+Exec=code %f

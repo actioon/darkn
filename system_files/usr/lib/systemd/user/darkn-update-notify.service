@@ -1,0 +1,9 @@
+[Unit]
+Description=Darkn OS: check for updates and notify
+ConditionUser=!@system
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-update-notify
+# The script waits for the notification to be answered or dismissed.
+TimeoutStartSec=infinity

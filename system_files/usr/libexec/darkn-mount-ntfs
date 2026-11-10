@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Darkn OS: mount the Windows (NTFS) partitions on internal drives at boot,
+# owned by the first regular user, under /var/mnt/<label>.
+#
+# Removable drives are left to the desktop. Small recovery partitions are
+# skipped. If Windows left a volume in a hibernated or unclean state it is
+# mounted read-only instead of being forced, so nothing on it can be damaged.
+
+set -uo pipefail
+
+WINDOWS_RECOVERY="de94bba4-06d1-4d40-a16a-bfd50179d6ac"
+MIN_SIZE=$((4 * 1024 * 1024 * 1024))
+
+read -r uid gid < <(awk -F: '$3 >= 1000 && $3 < 60000 { print $3, $4; exit }' /etc/passwd)
+[[ -n "${uid:-}" ]] || exit 0
+
+lsblk -J -b -p -o NAME,FSTYPE,LABEL,UUID,SIZE,PARTTYPE,MOUNTPOINT,RM,HOTPLUG |
+    jq -r '.. | objects
+           | select(.fstype == "ntfs" and .rm == false and .hotplug == false)
+           | [.name, (.label // ""), (.uuid // ""), (.size | tostring), (.parttype // ""), (.mountpoint // "")]
+           | @tsv' |
+    while IFS=$'\t' read -r dev label uuid size parttype mountpoint; do
+        [[ -z "$mountpoint" ]] || continue
+        [[ "$parttype" != "$WINDOWS_RECOVERY" ]] || continue
+        (( size >= MIN_SIZE )) || continue
+
+        # Disk labels are untrusted text: keep only safe characters.
+        name="$(printf '%s' "$label" | tr -c 'A-Za-z0-9._ -' '_' | sed 's/^[ .]*//; s/[ .]*$//')"
+        [[ -n "$name" ]] || name="windows-${uuid:0:8}"
+        target="/var/mnt/${name}"
+        if mountpoint -q "$target"; then
+            target="/var/mnt/${name}-${uuid:0:8}"
+        fi
+        mkdir -p "$target"
+
+        opts="uid=${uid},gid=${gid},umask=022,windows_names,noatime"
+        if mount -t ntfs3 -o "$opts" "$dev" "$target" 2>/dev/null; then
+            logger -t darkn-mount-ntfs "mounted ${dev} at ${target}"
+        elif mount -t ntfs3 -o "ro,${opts}" "$dev" "$target" 2>/dev/null; then
+            logger -t darkn-mount-ntfs "mounted ${dev} at ${target} READ-ONLY (Windows left it hibernated or unclean; turn off Fast Startup in Windows)"
+        else
+            logger -t darkn-mount-ntfs "could not mount ${dev}"
+            rmdir "$target" 2>/dev/null || true
+        fi
+    done
+exit 0

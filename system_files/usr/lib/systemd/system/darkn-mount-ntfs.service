@@ -1,0 +1,12 @@
+[Unit]
+Description=Darkn OS: mount internal Windows (NTFS) drives
+After=local-fs.target systemd-udev-settle.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-mount-ntfs
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

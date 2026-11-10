@@ -1,0 +1,31 @@
+# Darkn OS system-wide git defaults. Your own ~/.gitconfig overrides these;
+# name and email are yours to set:
+#   git config --global user.name  "Your Name"
+#   git config --global user.email "you@example.com"
+
+[init]
+	defaultBranch = main
+[core]
+	# Commit LF line endings, never convert on checkout.
+	autocrlf = input
+[push]
+	# First push of a new branch creates it on the remote.
+	autoSetupRemote = true
+[fetch]
+	prune = true
+[pull]
+	rebase = false
+[diff]
+	algorithm = histogram
+	colorMoved = default
+[merge]
+	conflictStyle = zdiff3
+[rerere]
+	enabled = true
+# Sign in once with "gh auth login"; git then uses that login for GitHub.
+[credential "https://github.com"]
+	helper =
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/usr/bin/gh auth git-credential

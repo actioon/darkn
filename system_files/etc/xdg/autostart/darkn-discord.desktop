@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Discord
+Comment=Start Discord minimized at login
+Exec=flatpak run com.discordapp.Discord --start-minimized
+Icon=com.discordapp.Discord
+Terminal=false
+X-KDE-autostart-phase=2

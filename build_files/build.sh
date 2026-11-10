@@ -8,7 +8,7 @@ cp -avf "/ctx/system_files"/. /
 # Files are authored on Windows, so set the executable bits here.
 chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
     /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick \
-    /usr/libexec/darkn-unzip-ar
+    /usr/libexec/darkn-unzip-ar /usr/libexec/darkn-mount-ntfs /usr/libexec/darkn-update-notify
 ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
 
 ### Programming languages and build tools
@@ -143,6 +143,59 @@ for tool in node npm npx; do
         ln -s "/usr/bin/${tool}-24" "/usr/bin/${tool}"
     fi
 done
+
+### System settings
+# Terminal tools, the GitHub CLI and NTFS repair tools.
+dnf5 install -y gh fzf zoxide bat eza ntfsprogs
+
+# KDE reads /usr/share/kde-settings/kde-profile before /etc/xdg, and Aurora
+# keeps its defaults there, so Darkn's desktop defaults go to the same place.
+KDE_PROFILE="/usr/share/kde-settings/kde-profile/default/xdg"
+kset() {
+    local file="$1"
+    shift
+    HOME=/tmp kwriteconfig6 --file "${KDE_PROFILE}/${file}" "$@"
+}
+
+# Password at login, but no automatic screen lock (Meta+L locks by hand).
+kset kscreenlockerrc --group Daemon --key Autolock false
+kset kscreenlockerrc --group Daemon --key LockOnResume true
+
+# Nothing turns off on its own: no dimming, no screen off, no sleep.
+kset powerdevilrc --group AC --group Display --key DimDisplayWhenIdle false
+kset powerdevilrc --group AC --group Display --key TurnOffDisplayWhenIdle false
+kset powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 0
+
+# Reopen the apps that were running at the last logout.
+kset ksmserverrc --group General --key loginMode restorePreviousLogout
+
+# NumLock on (0 = on, 1 = off, 2 = leave unchanged).
+kset kcminputrc --group Keyboard --key NumLock 0
+
+# Mute notifications while sharing the screen or using a fullscreen app.
+kset plasmanotifyrc --group DoNotDisturb --key WhenScreenSharing true
+kset plasmanotifyrc --group DoNotDisturb --key WhenFullscreen true
+
+# English interface with a 12-hour clock, metric units and A4 paper.
+kset plasma-localerc --group Formats --key LANG en_US.UTF-8
+kset plasma-localerc --group Formats --key LC_MEASUREMENT en_GB.UTF-8
+kset plasma-localerc --group Formats --key LC_PAPER en_GB.UTF-8
+
+# File manager: one set of view settings for every folder (see /etc/skel).
+kset dolphinrc --group General --key GlobalViewProps true
+
+grep -q '^Autolock=false' "${KDE_PROFILE}/kscreenlockerrc"
+
+# Default time zone; the installer can still change it.
+ln -sf ../usr/share/zoneinfo/Africa/Cairo /etc/localtime
+
+# Updates are announced, not applied automatically: the user decides when.
+systemctl disable uupd.timer
+systemctl disable brew-update.timer brew-upgrade.timer || true
+systemctl --global enable darkn-update-notify.timer
+
+# Windows data drives (NTFS) are mounted at boot.
+systemctl enable darkn-mount-ntfs.service
 
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same
