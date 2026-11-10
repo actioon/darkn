@@ -31,7 +31,23 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
+# The ArtCraft office and design apps come from ArtCraft's own repository,
+# see /usr/share/darkn/artcraft-flatpaks.list. OnlyOffice is the stable fallback.
 [Flatpak Preinstall org.onlyoffice.desktopeditors]
+Branch=stable
+IsRuntime=false
+
+# --- Security ---
+[Flatpak Preinstall com.bitwarden.desktop]
+Branch=stable
+IsRuntime=false
+
+# --- Screen recording and video editing ---
+[Flatpak Preinstall com.obsproject.Studio]
+Branch=stable
+IsRuntime=false
+
+[Flatpak Preinstall org.kde.kdenlive]
 Branch=stable
 IsRuntime=false
 
@@ -59,7 +75,13 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
-[Flatpak Preinstall net.portswigger.BurpSuite-Community]
+# API client (open source, works offline, no account)
+[Flatpak Preinstall com.usebruno.Bruno]
+Branch=stable
+IsRuntime=false
+
+# Database manager for PostgreSQL, MySQL/MariaDB and SQL Server
+[Flatpak Preinstall io.dbeaver.DBeaverCommunity]
 Branch=stable
 IsRuntime=false
 

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Darkn OS: install Flatpak apps that do not come from Flathub.
+#
+# Adds the official ArtCraft Flatpak repository (GPG key pinned in the image)
+# and installs the apps listed in /usr/share/darkn/artcraft-flatpaks.list.
+# Runs once; apps the user removes later are not reinstalled.
+# Bump VERSION to run again after changing the list.
+
+set -uo pipefail
+
+VERSION=1
+STAMP_DIR="/var/lib/darkn"
+STAMP="${STAMP_DIR}/artcraft-flatpaks.done"
+REMOTE="artcraft-oci"
+REPO_FILE="/usr/share/darkn/artcraft-oci.flatpakrepo"
+LIST="/usr/share/darkn/artcraft-flatpaks.list"
+
+if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$VERSION" ]]; then
+    exit 0
+fi
+
+flatpak remote-add --system --if-not-exists "$REMOTE" "$REPO_FILE" || exit 1
+
+mapfile -t apps < <(grep -v -E '^[[:space:]]*(#|$)' "$LIST")
+if [[ ${#apps[@]} -gt 0 ]]; then
+    flatpak install --system --noninteractive --or-update "$REMOTE" "${apps[@]}" || exit 1
+fi
+
+mkdir -p "$STAMP_DIR"
+echo "$VERSION" >"$STAMP"

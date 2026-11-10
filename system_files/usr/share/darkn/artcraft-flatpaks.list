@@ -1,0 +1,15 @@
+# ArtCraft apps installed from the official signed ArtCraft Flatpak repository
+# (https://getartcraft.com/linux). One Flatpak app id per line.
+# These apps are alpha software; OnlyOffice stays installed as the fallback.
+
+# Launcher: browse and install the rest of the ArtCraft suite
+ai.storyteller.artcraft-launcher
+
+# Design (Photoshop / Illustrator counterparts)
+ai.storyteller.photocraft
+ai.storyteller.vectorcraft
+
+# Office (Word / Excel / PowerPoint counterparts)
+ai.storyteller.wordcraft
+ai.storyteller.gridcraft
+ai.storyteller.deckcraft

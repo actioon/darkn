@@ -1,0 +1,18 @@
+[Unit]
+Description=Darkn OS: install ArtCraft apps from the official Flatpak repository
+Wants=network-online.target
+After=network-online.target flatpak-preinstall.service
+ConditionPathExists=/usr/bin/flatpak
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-flatpak-extra
+RemainAfterExit=true
+TimeoutStartSec=infinity
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

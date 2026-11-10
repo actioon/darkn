@@ -21,6 +21,12 @@ cask "ublue-os/tap/antigravity-ide-linux"
 # Editors
 cask "ublue-os/experimental-tap/cursor-linux"
 
+# Mobile development: mirror and control an Android phone from the desktop
+brew "scrcpy"
+
+# Databases: SQL Server command line client (psql and mariadb are in the image)
+brew "sqlcmd"
+
 # Misc CLI
 tap "supabase/tap"
 brew "supabase/tap/supabase"

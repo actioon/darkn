@@ -6,7 +6,7 @@ set -ouex pipefail
 cp -avf "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
-chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups
+chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra
 ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
 
 ### Programming languages and build tools
@@ -31,6 +31,8 @@ dnf5 install -y \
     python3-pip \
     uv \
     kubernetes1.36-client \
+    postgresql \
+    mariadb \
     sqlite \
     ripgrep \
     jq \
@@ -62,6 +64,7 @@ jq -e '.transports.docker["ghcr.io/actioon/darkn"][0].type == "sigstoreSigned"' 
 ### Services
 systemctl enable podman.socket
 systemctl enable darkn-groups.service
+systemctl enable darkn-flatpak-extra.service
 systemctl --global enable darkn-user-setup.service
 
 ### Sanity checks: fail the build if a toolchain is missing
@@ -77,6 +80,10 @@ cmake --version
 python3 --version
 uv --version
 kubectl version --client
+psql --version
+mariadb --version
+grep -q '^GPGKey=' /usr/share/darkn/artcraft-oci.flatpakrepo
+bash -n /usr/libexec/darkn-flatpak-extra
 command -v rustup-init
 command -v code
 command -v docker
