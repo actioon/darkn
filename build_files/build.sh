@@ -6,10 +6,12 @@ set -ouex pipefail
 cp -avf "/ctx/system_files"/. /
 
 # Files are authored on Windows, so set the executable bits here.
-chmod 0755 /usr/libexec/darkn-user-setup /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
+chmod 0755 /usr/libexec/darkn-installer /usr/bin/darkn-welcome /usr/libexec/darkn-backup \n    /usr/libexec/darkn-groups /usr/libexec/darkn-flatpak-extra \
     /usr/libexec/darkn-launch /usr/libexec/darkn-ocr /usr/libexec/darkn-colorpick \
     /usr/libexec/darkn-unzip-ar /usr/libexec/darkn-mount-ntfs /usr/libexec/darkn-update-notify
-ln -sf /usr/libexec/darkn-user-setup /usr/bin/darkn-setup
+# darkn-setup reopens the setup wizard; darkn-backup is the backup tool.
+ln -sf /usr/bin/darkn-welcome /usr/bin/darkn-setup
+ln -sf /usr/libexec/darkn-backup /usr/bin/darkn-backup
 
 ### Programming languages and build tools
 # The base image (aurora-dx-nvidia-open) already ships VS Code, Docker,
@@ -125,7 +127,7 @@ command -v kate
 ### Live wallpapers
 # Video wallpapers come from Fedora's plasma-smart-video-wallpaper-reborn
 # (installed above). Interactive ones are handled by waywallen: the app is a
-# Flatpak (see darkn.preinstall) and this is its Plasma wallpaper plugin,
+# Flatpak (offered by the setup wizard) and this is its Plasma wallpaper plugin,
 # pinned to an exact release and checksum.
 WAYWALLEN_KDE_VERSION="0.4.6"
 WAYWALLEN_KDE_SHA256="f98647b301d16c00f711adc7dcbf8ca6d23f237fad1835f13916079ad9c032ce"
@@ -259,6 +261,17 @@ python3 -c "import PyQt6.QtWidgets, PyQt6.QtSvg"
 command -v pw-play
 command -v busctl
 
+### Setup wizard, install engine and backups
+# Nothing is installed behind the user's back: the wizard (darkn-welcome)
+# shows the catalog, and darkn-installer installs only what was chosen.
+# The user service resumes an install that was interrupted.
+dnf5 install -y restic pciutils dbus-tools mokutil
+python3 -m json.tool /usr/share/darkn/catalog.json >/dev/null
+python3 -m py_compile /usr/libexec/darkn-installer /usr/bin/darkn-welcome
+find /usr/libexec /usr/bin -maxdepth 1 -name '__pycache__' -exec rm -rf {} +
+command -v restic
+command -v lspci
+
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same
 # way Aurora verifies its own images.
@@ -300,6 +313,6 @@ command -v docker
 command -v git
 command -v gh
 command -v flatpak
-bash -n /usr/libexec/darkn-user-setup
+bash -n /usr/libexec/darkn-backup
 bash -n /usr/libexec/darkn-groups
 test -x /usr/libexec/ublue-brew-trust-brewfile

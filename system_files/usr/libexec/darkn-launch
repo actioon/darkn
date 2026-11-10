@@ -8,7 +8,7 @@ export PATH="${HOME}/.local/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}"
 
 missing() {
     notify-send --app-name="Darkn OS" --icon=dialog-information \
-        "$1 is not installed yet" "It is installed automatically once the machine has been online. Check: darkn-setup --status" 2>/dev/null
+        "$1 is not installed yet" "Open Darkn OS Setup from the app menu to install it." 2>/dev/null
     exit 1
 }
 

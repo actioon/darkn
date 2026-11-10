@@ -1,4 +1,0 @@
-# Global npm packages installed for each user on first login (into ~/.local).
-# One package per line.
-@qwen-code/qwen-code
-eas-cli

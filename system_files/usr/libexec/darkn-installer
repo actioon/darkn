@@ -1,0 +1,696 @@
+#!/usr/bin/python3
+"""Darkn OS install engine.
+
+Installs the apps chosen in the setup wizard (darkn-welcome). It reads the
+catalog and the selection, installs each item with the right tool and records
+the result, so an interrupted run can be picked up again.
+
+  darkn-installer                 install everything that is selected
+  darkn-installer --json          same, reporting progress as JSON lines
+  darkn-installer --resume        finish an interrupted install (user service)
+  darkn-installer --retry-failed  give the failed items another try
+
+Exit status: 0 all good or nothing to do, 1 some items failed, 2 cannot run.
+"""
+
+import argparse
+import base64
+import fcntl
+import hashlib
+import http.client
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "darkn"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "darkn"
+
+CATALOG = Path("/usr/share/darkn/catalog.json")
+SELECTION_FILE = CONFIG_DIR / "selection.json"
+STATE_FILE = STATE_DIR / "install-state.json"
+LOG_FILE = STATE_DIR / "install.log"
+LOCK_FILE = STATE_DIR / "install.lock"
+
+BREW = Path("/home/linuxbrew/.linuxbrew/bin/brew")
+NPM_PREFIX = HOME / ".local"
+CARGO_BIN = HOME / ".cargo" / "bin"
+RUSTUP_HOME = Path(os.environ.get("RUSTUP_HOME") or HOME / ".rustup")
+FLUTTER_ROOT = HOME / ".local" / "share" / "flutter"
+FLUTTER_URL = "https://github.com/flutter/flutter.git"
+T3_BASE = "https://github.com/pingdotgg/t3code/releases/latest/download"
+T3_APP = HOME / "Applications" / "T3-Code.AppImage"
+T3_DESKTOP = HOME / ".local" / "share" / "applications" / "t3-code.desktop"
+T3_ICON = HOME / ".local" / "share" / "icons" / "t3-code.png"
+T3_LINK = HOME / ".local" / "bin" / "t3-code"
+
+MAX_ATTEMPTS = 5            # --resume leaves an item alone after this many failures
+NETWORK_URL = "https://github.com"
+NETWORK_TRIES = 6           # interactive run: about a minute
+NETWORK_TRIES_RESUME = 60   # background run: about ten minutes
+NETWORK_DELAY = 10
+LOCK_POLL = 2
+LOG_LIMIT = 2 * 1024 * 1024
+
+DONE, SKIPPED = "done", "skipped"
+PERCENT = re.compile(r"(\d{1,3})%")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+NETWORK_ERRORS = (OSError, http.client.HTTPException, ValueError)
+
+
+class InstallError(Exception):
+    """An item could not be installed; the message is shown to the user."""
+
+
+class Stopped(BaseException):
+    """The engine was asked to stop (SIGTERM)."""
+
+
+# --- running things ----------------------------------------------------------
+
+def child_env():
+    """Environment for the tools we run: per-user tool folders first on PATH."""
+    env = dict(os.environ)
+    folders = [HOME / ".local" / "bin", CARGO_BIN, FLUTTER_ROOT / "bin", BREW.parent, BREW.parent.parent / "sbin"]
+    env["PATH"] = os.pathsep.join([*map(str, folders), env.get("PATH") or "/usr/bin:/bin"])
+    env["HOMEBREW_NO_ENV_HINTS"] = "1"
+    env["HOMEBREW_NO_ANALYTICS"] = "1"
+    env["NPM_CONFIG_PREFIX"] = str(NPM_PREFIX)
+    env["FLUTTER_ROOT"] = str(FLUTTER_ROOT)
+    return env
+
+
+def run(cmd, on_line=None, cwd=None):
+    """Run a command, pass each line it prints to on_line, return its exit status.
+
+    Returns 127 when the program does not exist. Progress output that redraws
+    one line with carriage returns arrives as separate lines. Tests replace
+    this function to fake the outside world.
+    """
+    try:
+        proc = subprocess.Popen([str(part) for part in cmd], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                env=child_env(), cwd=cwd, start_new_session=True)
+    except FileNotFoundError:
+        return 127
+    except OSError as error:
+        if on_line:
+            on_line(str(error))
+        return 126
+
+    def feed(raw):
+        text = ANSI.sub("", raw.decode("utf-8", "replace")).strip()
+        if text and on_line:
+            on_line(text)
+
+    try:
+        pending = b""
+        while True:
+            chunk = os.read(proc.stdout.fileno(), 8192)
+            if not chunk:
+                break
+            *lines, pending = re.split(rb"[\r\n]", pending + chunk)
+            for raw in lines:
+                feed(raw)
+        feed(pending)
+        return proc.wait()
+    finally:
+        if proc.poll() is None:  # we are being stopped: take the whole process group down
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (AttributeError, OSError):
+                proc.kill()
+            proc.wait()
+        proc.stdout.close()
+
+
+def open_url(url, timeout=60):
+    """Open an https URL for reading. Tests replace this function."""
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing to open {url}")
+    request = urllib.request.Request(url, headers={"User-Agent": "darkn-installer"})
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def online():
+    try:
+        with open_url(NETWORK_URL, timeout=10):
+            return True
+    except NETWORK_ERRORS:
+        return False
+
+
+def wait_for_network(tries, reporter):
+    for attempt in range(tries):
+        if online():
+            return True
+        if attempt == 0:
+            reporter.emit("log", id=None, line="Waiting for a network connection")
+        if attempt + 1 < tries:
+            time.sleep(NETWORK_DELAY)
+    return False
+
+
+def download(url, dest, on_progress=None):
+    """Download url into the file dest and return the SHA-512 of what was written."""
+    digest = hashlib.sha512()
+    with open_url(url) as response, open(dest, "wb") as out:
+        headers = getattr(response, "headers", None) or {}
+        total = int(headers.get("Content-Length") or 0)
+        received = 0
+        while True:
+            chunk = response.read(256 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+            digest.update(chunk)
+            received += len(chunk)
+            if on_progress and total:
+                on_progress(received * 100 // total)
+    if total and received != total:
+        raise OSError("the download was cut short")
+    return digest.digest()
+
+
+# --- reporting ---------------------------------------------------------------
+
+class Reporter:
+    """Sends progress to stdout (JSON lines or plain text) and to the log file."""
+
+    def __init__(self, as_json=False, log_file=None):
+        self.as_json = as_json
+        self.log_file = log_file
+        self.names = {}
+        self.stdout_ok = True
+
+    def emit(self, event, **fields):
+        record = {"event": event, **fields}
+        if event == "plan":
+            self.names = {item["id"]: item["name"] for item in fields["items"]}
+        text = self._text(record)
+        if text:
+            self._log(text)
+        if self.as_json:
+            self._print(json.dumps(record, ensure_ascii=False))
+        elif text:
+            self._print(text)
+
+    def _text(self, record):
+        event = record["event"]
+        if event == "plan":
+            return f"{len(record['items'])} items to install"
+        if event == "start":
+            name = self.names.get(record["id"], record["id"])
+            return f"[{record['index']}/{record['total']}] {name}"
+        if event == "log":
+            return f"    {record['line']}"
+        if event == "done":
+            return "    already installed" if record.get("skipped") else "    done"
+        if event == "failed":
+            return f"    FAILED: {record['error']}"
+        if event == "finished":
+            return f"Finished: {record['done']} installed, {record['failed']} failed"
+        if event == "fatal":
+            return f"Error: {record['error']}"
+        return None  # progress and anything else is for the wizard only
+
+    def _print(self, line):
+        if not self.stdout_ok:
+            return
+        try:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            self.stdout_ok = False  # the wizard went away; keep installing
+
+    def _log(self, text):
+        if not self.log_file:
+            return
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as log:
+                log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {text}\n")
+        except OSError:
+            pass
+
+
+# --- catalog, selection, state -----------------------------------------------
+
+def load_catalog(path):
+    """All catalog items in catalog order."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    items = []
+    for category in data["categories"]:
+        for item in category["items"]:
+            if item.get("id") and item.get("kind"):
+                items.append({"name": item["id"], **item})
+    return items
+
+
+def load_selection(path):
+    """The chosen item ids, or None when nothing was ever chosen."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return {str(item_id) for item_id in data["selected"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def load_state(path=None):
+    try:
+        data = json.loads(Path(path or STATE_FILE).read_text(encoding="utf-8"))
+        if isinstance(data.get("items"), dict):
+            return {"version": 1, "items": data["items"]}
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"version": 1, "items": {}}
+
+
+def save_state(state, path=None):
+    path = Path(path or STATE_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def reset_failed(state):
+    for item_id in [key for key, entry in state["items"].items() if entry.get("status") == "failed"]:
+        del state["items"][item_id]
+
+
+def make_plan(items, selected, state, mode="all"):
+    """What to install, in catalog order.
+
+    "all" is the wizard's Install button: every selected item (those already
+    on the system are reported as skipped). "pending" leaves out what already
+    succeeded. "resume" also leaves out items that failed too many times.
+    """
+    plan = []
+    for item in items:
+        if item["id"] not in selected:
+            continue
+        entry = state["items"].get(item["id"], {})
+        if mode != "all" and entry.get("status") == "done":
+            continue
+        if mode == "resume" and entry.get("attempts", 0) >= MAX_ATTEMPTS:
+            continue
+        plan.append(item)
+    return plan
+
+
+def acquire_lock(wait, reporter):
+    """Take the install lock. Returns the open lock file, or None if it is busy."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    handle = open(LOCK_FILE, "a+")
+    told = False
+    while True:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except OSError:
+            if not wait:
+                handle.close()
+                return None
+            if not told:
+                reporter.emit("log", id=None, line="Another install is running; waiting for it to finish")
+                told = True
+            time.sleep(LOCK_POLL)
+
+
+# --- handlers ----------------------------------------------------------------
+
+class Job:
+    """One item being installed: runs commands and reports what they print."""
+
+    def __init__(self, item, reporter, shared):
+        self.item = item
+        self.reporter = reporter
+        self.shared = shared  # facts worth remembering for the whole run
+        self.last_line = ""
+        self.percent = None
+
+    def log(self, line):
+        self.last_line = line
+        self.reporter.emit("log", id=self.item["id"], line=line)
+
+    def progress(self, percent):
+        percent = max(0, min(100, int(percent)))
+        if percent != self.percent:
+            self.percent = percent
+            self.reporter.emit("progress", id=self.item["id"], percent=percent)
+
+    def run(self, cmd, on_line=None, quiet=False, cwd=None):
+        def feed(line):
+            if not quiet:
+                self.log(line)
+            if on_line:
+                on_line(line)
+        self.last_line = ""
+        return run(cmd, on_line=feed, cwd=cwd)
+
+    def must(self, status, tool):
+        """Turn a failed exit status into an InstallError."""
+        if status == 127:
+            raise InstallError(f"{tool} was not found")
+        if status != 0:
+            raise InstallError(self.last_line or f"{tool} failed with exit status {status}")
+
+
+def install_flatpak(item, job):
+    ref, remote = item["ref"], item.get("remote", "flathub")
+    status = job.run(["flatpak", "info", ref], quiet=True)
+    if status == 127:
+        raise InstallError("Flatpak was not found")
+    if status == 0:
+        return SKIPPED
+
+    if "remotes" not in job.shared:
+        names = []
+        listed = job.run(["flatpak", "remotes", "--columns=name"], on_line=names.append, quiet=True)
+        job.shared["remotes"] = set(names) if listed == 0 else None
+    remotes = job.shared["remotes"]
+    if remotes is not None and remote not in remotes:
+        raise InstallError(f"The app source \"{remote}\" is not set up yet; it is added when the system starts")
+
+    def watch(line):
+        match = PERCENT.search(line)
+        if match:
+            percent = int(match.group(1))
+            part = re.search(r"(\d+)/(\d+)", line)  # "Installing 2/3… 40%"
+            if part and 0 < int(part.group(1)) <= int(part.group(2)):
+                percent = ((int(part.group(1)) - 1) * 100 + percent) // int(part.group(2))
+            job.progress(percent)
+
+    status = job.run(["flatpak", "install", "--system", "--noninteractive", "--or-update", remote, ref],
+                     on_line=watch)
+    job.must(status, "flatpak")
+    return DONE
+
+
+def install_brew(item, job):
+    if not os.access(BREW, os.X_OK):
+        raise InstallError("Homebrew is not ready yet")
+    pkg, cask = item["pkg"], bool(item.get("cask"))
+    listing = [BREW, "list", "--cask" if cask else "--formula", pkg.rsplit("/", 1)[-1]]
+    if job.run(listing, quiet=True) == 0:
+        return SKIPPED
+
+    tap = item.get("tap")
+    tapped = job.shared.setdefault("taps", set())
+    if tap and tap not in tapped:
+        job.run([BREW, "trust", "--tap", tap], quiet=True)  # only newer Homebrew knows this
+        job.must(job.run([BREW, "tap", tap]), "brew tap")
+        tapped.add(tap)
+    job.must(job.run([BREW, "install", *(["--cask"] if cask else []), pkg]), "brew install")
+    return DONE
+
+
+def install_npm(item, job):
+    pkg = item["pkg"]
+    if (NPM_PREFIX / "lib" / "node_modules" / pkg / "package.json").is_file():
+        return SKIPPED
+    job.must(job.run(["npm", "install", "-g", pkg]), "npm")
+    return DONE
+
+
+def install_vscode(item, job):
+    wanted = list(item.get("extensions", []))
+    have = set()
+    status = job.run(["code", "--list-extensions"], on_line=lambda line: have.add(line.lower()), quiet=True)
+    if status == 127:
+        raise InstallError("VS Code was not found")
+    todo = [ext for ext in wanted if ext.lower() not in have]
+    if not todo:
+        return SKIPPED
+
+    failed = []
+    finished = len(wanted) - len(todo)
+    for ext in todo:
+        if job.run(["code", "--install-extension", ext, "--force"]) != 0:
+            failed.append(ext)
+        finished += 1
+        job.progress(finished * 100 // len(wanted))
+    if failed:
+        raise InstallError("Could not install: " + ", ".join(failed))
+    return DONE
+
+
+def install_rust(item, job):
+    rustup = CARGO_BIN / "rustup"
+    if rustup.exists():
+        toolchains = RUSTUP_HOME / "toolchains"
+        if toolchains.is_dir() and any(entry.name.startswith("stable") for entry in toolchains.iterdir()):
+            return SKIPPED
+        job.must(job.run([rustup, "update", "stable"]), "rustup")
+    else:
+        job.must(job.run(["rustup-init", "-y", "--no-modify-path", "--default-toolchain", "stable",
+                          "--component", "rust-analyzer"]), "rustup-init")
+    return DONE
+
+
+def install_flutter(item, job):
+    tool = FLUTTER_ROOT / "bin" / "flutter"
+    cloned = (FLUTTER_ROOT / ".git").is_dir()
+    if cloned and (FLUTTER_ROOT / "bin" / "cache" / "dart-sdk").is_dir():
+        return SKIPPED
+
+    if not cloned:
+        shutil.rmtree(FLUTTER_ROOT, ignore_errors=True)
+        FLUTTER_ROOT.parent.mkdir(parents=True, exist_ok=True)
+
+        def watch(line):
+            if line.startswith("Receiving objects"):
+                match = PERCENT.search(line)
+                if match:
+                    job.progress(match.group(1))
+
+        job.must(job.run(["git", "clone", "--progress", "--depth", "1", "--branch", "stable",
+                          FLUTTER_URL, FLUTTER_ROOT], on_line=watch), "git")
+    job.run([tool, "--disable-analytics"], quiet=True)
+    # Downloads the Dart SDK and proves the checkout works.
+    job.must(job.run([tool, "--version"]), "flutter")
+    return DONE
+
+
+def parse_manifest(text):
+    """File name and SHA-512 of the AppImage named in electron-builder's latest-linux.yml.
+
+    Only the top-level "path:" and "sha512:" keys are read; the sha512 is
+    base64 and is returned as raw bytes.
+    """
+    fields = {}
+    for line in text.splitlines():
+        match = re.match(r"(path|sha512):\s*(\S.*?)\s*$", line)
+        if match and match.group(1) not in fields:
+            fields[match.group(1)] = match.group(2).strip("'\"")
+    name = fields.get("path", "")
+    try:
+        digest = base64.b64decode(fields.get("sha512", ""), validate=True)
+    except ValueError:
+        digest = b""
+    # A plain file name only: nothing that could point somewhere else.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.AppImage", name) or len(digest) != 64:
+        raise InstallError("Unexpected T3 Code release manifest")
+    return name, digest
+
+
+def desktop_quote(path):
+    """A path as an argument of a desktop entry's Exec line."""
+    path = str(path)
+    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./-]+", path):
+        return path.replace("%", "%%")
+    return '"' + re.sub(r'(["`$\\])', r"\\\1", path).replace("%", "%%") + '"'
+
+
+def install_t3code(item, job):
+    if T3_APP.is_file() and os.access(T3_APP, os.X_OK) and T3_DESKTOP.is_file():
+        return SKIPPED
+    try:
+        with open_url(f"{T3_BASE}/latest-linux.yml", timeout=30) as response:
+            manifest = response.read(256 * 1024).decode("utf-8", "replace")
+    except NETWORK_ERRORS as error:
+        raise InstallError(f"Could not read the T3 Code release information: {error}") from error
+    name, expected = parse_manifest(manifest)
+
+    T3_APP.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(prefix=".t3code.", dir=T3_APP.parent)
+    os.close(handle)
+    try:
+        job.log(f"Downloading {name}")
+        try:
+            actual = download(f"{T3_BASE}/{name}", tmp, job.progress)
+        except NETWORK_ERRORS as error:
+            raise InstallError(f"T3 Code download failed: {error}") from error
+        # Refuse to install a download that does not match the published checksum.
+        if actual != expected:
+            raise InstallError("T3 Code checksum mismatch; download discarded")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, T3_APP)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+    icon = "t3-code"
+    work = tempfile.mkdtemp(prefix="darkn-t3code-")
+    try:  # best effort: pull the app icon out of the AppImage
+        if job.run([T3_APP, "--appimage-extract", "*.png"], quiet=True, cwd=work) == 0:
+            found = sorted(Path(work, "squashfs-root").glob("*.png"))
+            if found:
+                T3_ICON.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(found[0], T3_ICON)
+                icon = str(T3_ICON)
+    except OSError:
+        pass
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    T3_DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+    T3_DESKTOP.write_text(
+        "[Desktop Entry]\nType=Application\nName=T3 Code\nComment=Desktop app for coding agents\n"
+        f"Exec={desktop_quote(T3_APP)} %U\nIcon={icon}\nTerminal=false\nCategories=Development;\n",
+        encoding="utf-8")
+    try:
+        T3_LINK.parent.mkdir(parents=True, exist_ok=True)
+        if T3_LINK.is_symlink() or T3_LINK.exists():
+            T3_LINK.unlink()
+        T3_LINK.symlink_to(T3_APP)
+    except OSError as error:
+        job.log(f"Could not create {T3_LINK}: {error}")
+    return DONE
+
+
+SCRIPTS = {"rust": install_rust, "flutter": install_flutter, "t3code": install_t3code}
+HANDLERS = {
+    "flatpak": install_flatpak,
+    "brew": install_brew,
+    "npm": install_npm,
+    "vscode": install_vscode,
+    "script": lambda item, job: SCRIPTS[item["script"]](item, job),
+}
+
+
+# --- the run -----------------------------------------------------------------
+
+def install_all(plan, state, reporter):
+    """Install every item of the plan; returns how many were done, skipped and failed."""
+    counts = {DONE: 0, SKIPPED: 0, "failed": 0}
+    shared = {}
+    for index, item in enumerate(plan, 1):
+        reporter.emit("start", id=item["id"], index=index, total=len(plan))
+        attempts = state["items"].get(item["id"], {}).get("attempts", 0)
+        try:
+            handler = HANDLERS.get(item["kind"])
+            if handler is None:
+                raise InstallError(f"Unknown kind of item: {item['kind']}")
+            result = handler(item, Job(item, reporter, shared))
+        except Exception as error:  # whatever goes wrong with one item, go on with the next
+            if isinstance(error, KeyError):
+                message = f"Catalog entry is missing {error}"
+            elif isinstance(error, (InstallError, OSError)):
+                message = str(error)
+            else:
+                message = f"{type(error).__name__}: {error}"
+            counts["failed"] += 1
+            state["items"][item["id"]] = {"status": "failed", "attempts": attempts + 1, "error": message,
+                                          "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            reporter.emit("failed", id=item["id"], error=message)
+        else:
+            counts[result] += 1
+            state["items"][item["id"]] = {"status": "done", "attempts": attempts, "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            reporter.emit("done", id=item["id"], skipped=result == SKIPPED)
+        save_state(state)
+    return counts
+
+
+def notify(title, text):
+    run(["notify-send", "--app-name=Darkn OS", "--icon=system-software-install", title, text])
+
+
+def rotate_log():
+    try:
+        if LOG_FILE.stat().st_size > LOG_LIMIT:
+            LOG_FILE.replace(LOG_FILE.with_suffix(".log.1"))
+    except OSError:
+        pass
+
+
+def stop(_signal, _frame):
+    raise Stopped()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Install the apps chosen in the Darkn OS setup wizard.")
+    parser.add_argument("--json", action="store_true", help="report progress as JSON lines")
+    parser.add_argument("--resume", action="store_true", help="finish an interrupted install, quietly")
+    parser.add_argument("--retry-failed", action="store_true", help="try the failed items again")
+    parser.add_argument("--catalog", default=str(CATALOG), help="catalog file")
+    parser.add_argument("--selection", default=str(SELECTION_FILE), help="selection file")
+    args = parser.parse_args(argv)
+
+    selected = load_selection(args.selection)
+    if selected is None and args.resume:
+        return 0
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    rotate_log()
+    reporter = Reporter(args.json, LOG_FILE)
+    if selected is None:
+        reporter.emit("fatal", error="Nothing has been chosen yet; open the setup wizard with darkn-setup")
+        return 2
+    try:
+        items = load_catalog(args.catalog)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        reporter.emit("fatal", error=f"Cannot read the catalog {args.catalog}: {error}")
+        return 0 if args.resume else 2  # retrying would not help the service
+
+    signal.signal(signal.SIGTERM, stop)
+    lock = None
+    try:
+        lock = acquire_lock(wait=not args.resume, reporter=reporter)
+        if lock is None:
+            return 0  # the wizard is installing right now
+
+        state = load_state()
+        if args.retry_failed:
+            reset_failed(state)
+            save_state(state)
+        mode = "resume" if args.resume else "pending" if args.retry_failed else "all"
+        plan = make_plan(items, selected, state, mode)
+        if args.resume and not plan:
+            return 0
+
+        reporter.emit("plan", items=[{"id": i["id"], "name": i["name"], "kind": i["kind"]} for i in plan])
+        if plan and not wait_for_network(NETWORK_TRIES_RESUME if args.resume else NETWORK_TRIES, reporter):
+            reporter.emit("fatal", error="No network connection")
+            return 1 if args.resume else 2
+
+        if args.resume:
+            notify("Darkn OS", f"Installing {len(plan)} apps and tools in the background.")
+        counts = install_all(plan, state, reporter)
+        reporter.emit("finished", done=counts[DONE] + counts[SKIPPED], failed=counts["failed"],
+                      skipped=counts[SKIPPED])
+        if args.resume:
+            if counts["failed"]:
+                notify("Darkn OS", f"{counts['failed']} items could not be installed. "
+                                   "Open Darkn OS Setup (darkn-setup) to see them and retry.")
+            else:
+                notify("Darkn OS", "Your apps and tools are installed.")
+        return 1 if counts["failed"] else 0
+    except (Stopped, KeyboardInterrupt):
+        reporter.emit("log", id=None, line="Stopped before finishing; the rest is installed later")
+        return 130
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

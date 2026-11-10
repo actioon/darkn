@@ -4,7 +4,7 @@
 # npm -g installs into ~/.local instead of /usr
 export NPM_CONFIG_PREFIX="${HOME}/.local"
 
-# Flutter SDK location used by darkn-user-setup
+# Flutter SDK location used by the Darkn OS installer
 export FLUTTER_ROOT="${HOME}/.local/share/flutter"
 
 _darkn_path_add() {

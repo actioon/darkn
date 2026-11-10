@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Darkn OS Setup
+Comment=First-run setup wizard
+Exec=/usr/bin/darkn-welcome --autostart
+Icon=preferences-system
+Terminal=false
+X-KDE-autostart-phase=2

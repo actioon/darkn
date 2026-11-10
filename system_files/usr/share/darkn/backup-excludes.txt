@@ -1,0 +1,54 @@
+# Darkn OS backup: things that are not worth backing up because they are
+# caches, downloads, or can be installed again. Paths are restic patterns.
+
+# Caches and temporary files
+**/.cache
+**/Cache
+**/CachedData
+**/Code Cache
+**/GPUCache
+**/.local/share/Trash
+**/.thumbnails
+**/*.tmp
+
+# Dependencies and build output that a project can recreate
+**/node_modules
+**/.venv
+**/venv
+**/__pycache__
+**/.gradle
+**/.dart_tool
+**/target/debug
+**/target/release
+**/build/intermediates
+**/.next
+**/dist/.cache
+
+# Toolchains and SDKs installed by the Darkn OS setup
+**/.local/share/flutter
+**/.cargo/registry
+**/.cargo/git
+**/.rustup
+**/.npm
+**/.pub-cache
+**/.local/lib/node_modules
+**/Android/Sdk
+**/.android/avd
+**/Applications/*.AppImage
+
+# Apps keep their own caches; their settings and data are still backed up
+**/.var/app/*/cache
+**/.var/app/*/.cache
+**/.config/*/Cache
+**/.config/*/Service Worker
+
+# Containers, virtual machines and other very large, replaceable files
+**/.local/share/containers
+**/.local/share/docker
+**/.local/share/libvirt
+**/*.iso
+**/*.qcow2
+**/*.vdi
+
+# Downloads are usually easy to get again
+**/Downloads

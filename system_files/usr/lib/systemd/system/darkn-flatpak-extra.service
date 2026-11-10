@@ -1,5 +1,5 @@
 [Unit]
-Description=Darkn OS: install ArtCraft apps from the official Flatpak repository
+Description=Darkn OS: register the ArtCraft Flatpak repository
 Wants=network-online.target
 After=network-online.target flatpak-preinstall.service
 ConditionPathExists=/usr/bin/flatpak

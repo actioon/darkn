@@ -1,0 +1,2676 @@
+#!/usr/bin/python3
+"""Darkn OS: Setup.
+
+The first-run wizard: keyboard layouts, time zone, a hardware check, which
+apps and developer tools to install, and backups. Nothing is installed unless
+it is chosen here. The choices are saved under ~/.config/darkn and the apps
+are installed by /usr/libexec/darkn-installer, whose progress is shown live.
+
+  darkn-welcome              open the wizard (also reachable as darkn-setup)
+  darkn-welcome --autostart  open it only if setup was never finished
+"""
+
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+CONFIG_DIR = CONFIG_HOME / "darkn"
+DONE_FILE = CONFIG_DIR / "welcome-done"
+
+# Checked before Qt is loaded: this runs at every login.
+if __name__ == "__main__" and "--autostart" in sys.argv[1:] and DONE_FILE.exists():
+    sys.exit(0)
+
+from PyQt6.QtCore import QByteArray, QPointF, QProcess, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QGuiApplication, QIcon, QImage, QImageReader, QLinearGradient, QPainter,
+    QPainterPath, QPalette, QPen, QPixmap, QRadialGradient,
+)
+from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtWidgets import (
+    QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QFileDialog, QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
+    QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyleOption, QVBoxLayout, QWidget,
+)
+
+CATALOG_FILE = Path("/usr/share/darkn/catalog.json")
+SELECTION_FILE = CONFIG_DIR / "selection.json"
+BACKUP_FILE = CONFIG_DIR / "backup.json"
+ENGINE_CMD = ["/usr/libexec/darkn-installer"]
+BACKUP_CMD = ["/usr/libexec/darkn-backup"]
+RESUME_UNIT = "darkn-user-setup.service"   # runs "darkn-installer --resume"
+GEOIP_URL = "https://geoip.fedoraproject.org/city"
+STOP_WAIT_MS = 8000
+
+# Where the glass background comes from; the first match wins.
+WALLPAPER_DIRS = [Path("/usr/share/wallpapers")]
+WALLPAPER_CHOICES = ["Darkn-Macos-Mojave", "Darkn-Windows-11-Stock-Grey", "Darkn-Sagittarius-A-Black",
+                     "Darkn-Jungle-Tree-Dark", "Darkn-"]
+
+# Catalog categories shown on the developer page; terminal tools from other
+# categories join them (see is_developer_item).
+DEV_CATEGORIES = ("development", "vscode")
+SYSTEM_TOOLS = ["Node.js 24", "Python + uv", "JDK 25", ".NET 10", "GCC / Clang", "Docker", "VS Code", "git",
+                "GitHub CLI"]
+
+# id, name, name in its own language, XKB layout, XKB variant
+LAYOUTS = [
+    ("us", "English (US)", "English", "us", ""),
+    ("ara", "Arabic", "العربية", "ara", ""),
+    ("fr", "French", "Français", "fr", ""),
+    ("de", "German", "Deutsch", "de", ""),
+    ("es", "Spanish", "Español", "es", ""),
+    ("tr", "Turkish", "Türkçe", "tr", ""),
+    ("ru", "Russian", "Русский", "ru", ""),
+    ("ir", "Persian", "فارسی", "ir", ""),
+    ("urdu", "Urdu", "اردو", "pk", "urd-nla"),
+]
+DEFAULT_LAYOUTS = ["us", "ara"]
+# id, label, XKB option. Meta+Space is a Plasma shortcut and works with all of them.
+SWITCHERS = [
+    ("alt_shift", "Alt + Shift", "grp:alt_shift_toggle"),
+    ("ctrl_shift", "Ctrl + Shift", "grp:ctrl_shift_toggle"),
+    ("caps", "Caps Lock", "grp:caps_toggle"),
+    ("none", "Meta + Space only", ""),
+]
+
+REAL_FILESYSTEMS = {"ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "bcachefs", "zfs", "ntfs", "ntfs3", "fuseblk",
+                    "vfat", "exfat", "nfs", "nfs4", "cifs", "smb3"}
+MOUNT_ROOTS = ("/var/mnt", "/run/media", "/mnt", "/media")
+BACKUP_MIN_GB, BACKUP_MAX_GB, BACKUP_DEFAULT_GB = 10, 500, 50
+GIB = 1024 ** 3
+
+
+# --- small tools -----------------------------------------------------------
+
+def run_cmd(args, timeout=15):
+    """Run a command and return (exit status, output); never raises.
+
+    The output is stdout on success and the error text otherwise. Status 127
+    means the program is missing, 124 that it took too long.
+    """
+    try:
+        done = subprocess.run([str(a) for a in args], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except FileNotFoundError:
+        return 127, f"{args[0]} is not installed"
+    except subprocess.TimeoutExpired:
+        return 124, f"{args[0]} did not answer"
+    except OSError as error:
+        return 126, str(error)
+    if done.returncode == 0:
+        return 0, done.stdout
+    return done.returncode, (done.stderr or done.stdout).strip()
+
+
+def read_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def read_kconfig(path, group, key):
+    """One value from a KDE config file, or None."""
+    inside = False
+    for line in read_text(path).splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            inside = line == f"[{group}]"
+        elif inside and line.startswith(f"{key}="):
+            return line.split("=", 1)[1]
+    return None
+
+
+def write_kconfig_file(path, group, entries):
+    """Set keys of one group in a KDE config file, keeping everything else."""
+    lines = read_text(path).splitlines()
+    header = f"[{group}]"
+    if header not in [line.strip() for line in lines]:
+        lines += ([""] if lines else []) + [header]
+    out, inside, left = [], False, dict(entries)
+
+    def flush():
+        while out and not out[-1].strip():
+            out.pop()
+        out.extend(f"{key}={value}" for key, value in left.items())
+        left.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            if inside:
+                flush()
+                out.append("")
+            inside = stripped == header
+        elif inside and "=" in stripped and stripped.split("=", 1)[0] in left:
+            key = stripped.split("=", 1)[0]
+            line = f"{key}={left.pop(key)}"
+        out.append(line)
+    if inside:
+        flush()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def write_kconfig(file_name, group, entries):
+    """Write settings with kwriteconfig6, or by editing the file if that tool is missing."""
+    for key, value in entries.items():
+        status, _ = run_cmd(["kwriteconfig6", "--file", file_name, "--group", group, "--key", key, value])
+        if status != 0:
+            break
+    else:
+        return True
+    try:
+        write_kconfig_file(CONFIG_HOME / file_name, group, entries)
+        return True
+    except OSError:
+        return False
+
+
+def fmt_size(size):
+    if size is None:
+        return "unknown"
+    gib = size / GIB
+    if gib >= 1000:
+        return f"{gib / 1024:.1f} TB"
+    return f"{gib:.0f} GB" if gib >= 10 else f"{gib:.1f} GB"
+
+
+def plural(count, word):
+    return f"{count} {word}" + ("" if count == 1 else "s")
+
+
+# --- catalog and selection -------------------------------------------------
+
+def load_catalog(path=None):
+    """The catalog's categories; an empty list if the file cannot be read."""
+    try:
+        data = json.loads(Path(path or CATALOG_FILE).read_text(encoding="utf-8"))
+        return [c for c in data["categories"] if isinstance(c.get("items"), list)]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return []
+
+
+def is_developer_item(category, item):
+    """Whether an item belongs on the developer page rather than the apps page."""
+    if category["id"] in DEV_CATEGORIES or item.get("page") == "developer":
+        return True
+    return "terminal" in item.get("description", "").lower()
+
+
+def split_catalog(categories):
+    """Catalog groups for the apps page and for the developer page."""
+    apps, dev, terminal = [], [], []
+    for category in categories:
+        if category["id"] in DEV_CATEGORIES:
+            dev.append(category)
+            continue
+        mine = [i for i in category["items"] if not is_developer_item(category, i)]
+        terminal += [i for i in category["items"] if is_developer_item(category, i)]
+        if mine:
+            apps.append({**category, "items": mine})
+    if terminal:
+        dev.insert(1 if dev else 0, {"id": "terminal", "name": "Terminal tools",
+                                     "description": "Assistants and agents that run in the terminal.",
+                                     "items": terminal})
+    return apps, dev
+
+
+def catalog_ids(categories):
+    return [item["id"] for category in categories for item in category["items"]]
+
+
+def default_selection(categories):
+    return {i["id"] for c in categories for i in c["items"] if i.get("default")}
+
+
+def load_selection(categories, path=None):
+    """What starts switched on: the saved selection of an earlier run, else the defaults."""
+    try:
+        data = json.loads(Path(path or SELECTION_FILE).read_text(encoding="utf-8"))
+        return {str(i) for i in data["selected"]} & set(catalog_ids(categories))
+    except (OSError, ValueError, KeyError, TypeError):
+        return default_selection(categories)
+
+
+def save_selection(selected, categories, path=None):
+    ordered = [i for i in catalog_ids(categories) if i in selected]
+    write_json(Path(path or SELECTION_FILE), {"version": 1, "selected": ordered})
+    return ordered
+
+
+# --- keyboard --------------------------------------------------------------
+
+def keyboard_settings(layout_ids, switcher="alt_shift"):
+    """The [Layout] entries of kxkbrc for the chosen layouts; English always comes first."""
+    chosen = [layout for layout in LAYOUTS if layout[0] == "us" or layout[0] in layout_ids]
+    option = next((s[2] for s in SWITCHERS if s[0] == switcher), SWITCHERS[0][2])
+    return {
+        "Use": "true",
+        "LayoutList": ",".join(layout[3] for layout in chosen),
+        "VariantList": ",".join(layout[4] for layout in chosen),
+        "DisplayNames": "," * (len(chosen) - 1),
+        "Options": option,
+        "ResetOldOptions": "true",
+    }
+
+
+def read_keyboard():
+    """Layout ids and switcher currently configured, falling back to the defaults."""
+    for path in (CONFIG_HOME / "kxkbrc", Path("/etc/xdg/kxkbrc")):
+        layouts = read_kconfig(path, "Layout", "LayoutList")
+        if not layouts:
+            continue
+        variants = (read_kconfig(path, "Layout", "VariantList") or "").split(",")
+        pairs = [(code, variants[n] if n < len(variants) else "") for n, code in enumerate(layouts.split(","))]
+        ids = [layout[0] for layout in LAYOUTS if (layout[3], layout[4]) in pairs]
+        options = (read_kconfig(path, "Layout", "Options") or "").split(",")
+        switcher = next((s[0] for s in SWITCHERS if s[2] and s[2] in options), "none")
+        return ids or list(DEFAULT_LAYOUTS), switcher
+    return list(DEFAULT_LAYOUTS), "alt_shift"
+
+
+def apply_keyboard(layout_ids, switcher):
+    if not write_kconfig("kxkbrc", "Layout", keyboard_settings(layout_ids, switcher)):
+        return False, "Could not save the keyboard layouts"
+    run_cmd(["dbus-send", "--session", "--type=signal", "/Layouts", "org.kde.keyboard.reloadConfig"])
+    return True, ""
+
+
+# --- region and time -------------------------------------------------------
+
+def parse_geoip(text):
+    """Time zone and place name from the answer of Fedora's location service."""
+    try:
+        data = json.loads(text)
+        zone = data.get("time_zone")
+    except (ValueError, AttributeError):
+        return None
+    if not zone or not isinstance(zone, str):
+        return None
+    place = ", ".join(str(data[k]) for k in ("city", "country_name") if data.get(k))
+    return {"zone": zone, "place": place}
+
+
+def fetch_geoip():
+    try:
+        request = urllib.request.Request(GEOIP_URL, headers={"User-Agent": "darkn-welcome"})
+        with urllib.request.urlopen(request, timeout=8) as response:
+            return parse_geoip(response.read(65536).decode("utf-8", "replace"))
+    except (OSError, ValueError):
+        return None
+
+
+def list_timezones():
+    status, out = run_cmd(["timedatectl", "list-timezones"])
+    zones = out.split() if status == 0 else []
+    if not zones:
+        try:
+            import zoneinfo
+            zones = sorted(z for z in zoneinfo.available_timezones() if "/" in z and not z.startswith("Etc/"))
+        except Exception:
+            zones = []
+    return zones or ["UTC"]
+
+
+def current_timezone():
+    status, out = run_cmd(["timedatectl", "show", "-p", "Timezone", "--value"])
+    if status == 0 and out.strip():
+        return out.strip()
+    try:
+        target = os.readlink("/etc/localtime")
+        return target.split("zoneinfo/", 1)[1]
+    except (OSError, IndexError):
+        return "UTC"
+
+
+def load_time_info():
+    return {"zones": list_timezones(), "current": current_timezone()}
+
+
+def clock_locale(hours24):
+    return "en_GB.UTF-8" if hours24 else "en_US.UTF-8"
+
+
+def read_clock():
+    """True if the clock is currently set to 24 hours."""
+    value = read_kconfig(CONFIG_HOME / "plasma-localerc", "Formats", "LC_TIME")
+    return bool(value) and not value.startswith("en_US")
+
+
+def format_clock(zone, hours24, now=None):
+    """Time and date in a zone, e.g. ("3:42 PM", "Tuesday, 10 November")."""
+    if now is None:
+        try:
+            import zoneinfo
+            now = datetime.now(zoneinfo.ZoneInfo(zone))
+        except Exception:
+            now = datetime.now()
+    clock = now.strftime("%H:%M") if hours24 else now.strftime("%I:%M %p").lstrip("0")
+    return clock, f"{now.strftime('%A')}, {now.day} {now.strftime('%B')}"
+
+
+def apply_region(zone, current, hours24, write_clock):
+    problems = []
+    if zone and zone != current:
+        # May ask for the password; give the prompt time.
+        status, out = run_cmd(["timedatectl", "set-timezone", zone], timeout=180)
+        if status != 0:
+            reason = out.splitlines()[-1] if out else "no permission"
+            problems.append(f"The time zone was not changed ({reason}); set it in System Settings, Date and Time")
+    if write_clock and not write_kconfig("plasma-localerc", "Formats", {"LC_TIME": clock_locale(hours24)}):
+        problems.append("Could not save the clock format")
+    return not problems, ". ".join(problems)
+
+
+# --- hardware --------------------------------------------------------------
+
+GPU_VENDORS = {"10de": ("nvidia", "NVIDIA"), "1002": ("amd", "AMD"), "1022": ("amd", "AMD"), "8086": ("intel", "Intel")}
+GPU_LINE = re.compile(r"^\S+\s+(?:VGA compatible controller|3D controller|Display controller)\s*\[[0-9a-f]{4}\]:\s*"
+                      r"(.*?)\s*\[([0-9a-f]{4}):[0-9a-f]{4}\]", re.IGNORECASE)
+VENDOR_PREFIX = re.compile(r"^(NVIDIA Corporation|Advanced Micro Devices, Inc\.(\s*\[AMD/ATI\])?|"
+                           r"Intel Corporation)\s*", re.IGNORECASE)
+
+
+def parse_gpus(lspci):
+    """Graphics cards from `lspci -nn`: vendor key, display name and the raw description."""
+    gpus = []
+    for line in lspci.splitlines():
+        match = GPU_LINE.match(line.strip())
+        if not match:
+            continue
+        raw, vendor_id = match.group(1), match.group(2).lower()
+        vendor, brand = GPU_VENDORS.get(vendor_id, ("other", ""))
+        model = VENDOR_PREFIX.sub("", raw)
+        named = re.findall(r"\[([^\]]+)\]", model)
+        model = named[-1] if named else model
+        gpus.append({"vendor": vendor, "name": f"{brand} {model}".strip(), "raw": raw})
+    return gpus
+
+
+def open_driver_supports(description):
+    """Whether NVIDIA's open driver covers a card: True, False, or None if unclear.
+
+    It needs a GTX 16 series card (Turing) or newer.
+    """
+    if re.search(r"\bRTX\b|GTX 16\d\d|\b(TU|GA|AD|GB)\d{3}", description):
+        return True
+    if re.search(r"\bGTX?\b|\b(GV|GP|GM|GK|GF)\d{3}|\bNV[0-9A-F]{2}\b|Quadro [KMP]\d", description):
+        return False
+    return None
+
+
+def gpu_status(lspci, nvidia_version="", nvidia_smi="", secure_boot=""):
+    """What to tell the user about their graphics card.
+
+    Takes the output of `lspci -nn`, the text of /proc/driver/nvidia/version,
+    of `nvidia-smi --query-gpu=name,driver_version --format=csv,noheader` and
+    of `mokutil --sb-state`. Level is "ok", "warn", "info" or "none".
+    """
+    gpus = parse_gpus(lspci)
+    names = [gpu["name"] for gpu in gpus]
+    result = {"gpus": names, "driver": "", "hints": []}
+    nvidia = [gpu for gpu in gpus if gpu["vendor"] == "nvidia"]
+
+    if not gpus:
+        return {**result, "level": "none", "title": "No graphics card detected",
+                "detail": "The graphics hardware could not be identified, which is normal in a virtual "
+                          "machine. The desktop still works with the generic driver."}
+    if not nvidia:
+        return {**result, "level": "info", "title": "Works with the built-in drivers",
+                "detail": f"{' and '.join(names)} works with the built-in open-source drivers. "
+                          "The NVIDIA driver in this image is simply unused."}
+
+    smi = [part.strip() for part in nvidia_smi.strip().splitlines()[0].split(",")] if nvidia_smi.strip() else []
+    version = re.search(r"\b(\d{3}\.\d+(?:\.\d+)?)\b", nvidia_version)
+    if version or len(smi) >= 2:
+        driver = version.group(1) if version else smi[-1]
+        return {**result, "level": "ok", "driver": driver, "title": "Supported, driver active",
+                "detail": f"{nvidia[0]['name']} is running on the NVIDIA driver {driver} that ships with Darkn OS."}
+
+    supported = open_driver_supports(nvidia[0]["raw"])
+    too_old = {"text": "The card is older than the GTX 1650. NVIDIA's open driver only supports the GTX 16 "
+                       "series, RTX and newer; older cards keep working on the slower built-in driver.",
+               "command": "", "likely": supported is False}
+    locked = {"text": "Secure Boot is on and the Universal Blue key is not enrolled. Run this in a terminal, "
+                      "restart, and confirm the key on the blue screen that appears.",
+              "command": "ujust enroll-secure-boot-key",
+              "likely": supported is True and "enabled" in secure_boot.lower()}
+    return {**result, "level": "warn", "title": "NVIDIA driver is not active",
+            "detail": f"Darkn OS ships NVIDIA's open driver, but it is not running on {nvidia[0]['name']}. "
+                      "There are two usual causes.",
+            "hints": [too_old, locked] if supported is False else [locked, too_old]}
+
+
+def parse_cpu(cpuinfo):
+    match = re.search(r"^model name\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+    name = match.group(1) if match else ""
+    name = re.sub(r"\((R|TM)\)|\bCPU\b|\b\d+-Core Processor\b|@.*$", " ", name, flags=re.IGNORECASE)
+    return " ".join(name.split())
+
+
+def parse_memory(meminfo):
+    """Installed memory in whole GB (the kernel reports slightly less than what is fitted)."""
+    match = re.search(r"^MemTotal:\s*(\d+)\s*kB", meminfo, re.MULTILINE)
+    return -(-int(match.group(1)) // (1024 * 1024)) if match else 0
+
+
+def detect_hardware():
+    status, lspci = run_cmd(["lspci", "-nn"])
+    lspci = lspci if status == 0 else ""
+    version = read_text("/proc/driver/nvidia/version")
+    smi = ""
+    if not version and "[10de:" in lspci.lower():
+        status, out = run_cmd(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"])
+        smi = out if status == 0 else ""
+    status, secure_boot = run_cmd(["mokutil", "--sb-state"])
+    return {
+        "gpu": gpu_status(lspci, version, smi, secure_boot if status == 0 else ""),
+        "cpu": parse_cpu(read_text("/proc/cpuinfo")),
+        "cores": os.cpu_count() or 0,
+        "memory": parse_memory(read_text("/proc/meminfo")),
+    }
+
+
+# --- backups ---------------------------------------------------------------
+
+def parse_findmnt(text):
+    """Mounts from `findmnt -J -l -b -o TARGET,SOURCE,FSTYPE,AVAIL,SIZE`."""
+    def number(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def walk(entries):
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("target"):
+                yield {"target": str(entry["target"]), "source": str(entry.get("source") or ""),
+                       "fstype": str(entry.get("fstype") or ""), "avail": number(entry.get("avail")),
+                       "size": number(entry.get("size"))}
+                yield from walk(entry.get("children"))
+
+    try:
+        return list(walk(json.loads(text).get("filesystems")))
+    except (ValueError, AttributeError):
+        return []
+
+
+def parse_lsblk(text):
+    """Parent of every block device, from `lsblk -J -l -o PATH,KNAME,PKNAME`."""
+    parents = {}
+
+    def walk(entries):
+        for entry in entries or []:
+            if isinstance(entry, dict):
+                for key in ("path", "kname"):
+                    if entry.get(key):
+                        parents[str(entry[key])] = entry.get("pkname") or None
+                walk(entry.get("children"))
+
+    try:
+        walk(json.loads(text).get("blockdevices"))
+    except (ValueError, AttributeError):
+        pass
+    return parents
+
+
+def disk_of(source, parents=None):
+    """The physical drive behind a mount source, or None if it cannot be told."""
+    source = re.sub(r"\[.*\]$", "", source or "")  # btrfs subvolumes read /dev/sda2[/home]
+    if not source.startswith("/dev/"):
+        return None
+    if parents and source in parents:
+        name = Path(source).name
+        parent = parents[source]
+        while parent:
+            name, parent = parent, parents.get(parent)
+        return name
+    name = Path(source).name
+    match = re.fullmatch(r"((?:nvme|mmcblk)\d+(?:n\d+)?)p\d+|([a-z]+)\d+", name)
+    return (match.group(1) or match.group(2)) if match else name
+
+
+real_path = os.path.realpath  # /home is a link to /var/home on this system; tests replace this
+
+
+def mount_of(path, mounts):
+    """The mount a path lives on (the longest mount point that contains it)."""
+    path = real_path(str(path))
+    best = None
+    for mount in mounts:
+        target = mount["target"].rstrip("/")
+        if (path == target or path.startswith(target + "/")) and (best is None or len(target) > len(best["target"].rstrip("/"))):
+            best = mount
+    return best
+
+
+def disk_space(path):
+    """(free, total) bytes of the drive holding a path that may not exist yet."""
+    path = Path(path)
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    try:
+        usage = shutil.disk_usage(path)
+        return usage.free, usage.total
+    except OSError:
+        return None, None
+
+
+def backup_places(mounts, home, parents=None, writable=None):
+    """Where backups can go: the home drive first, then every other mounted drive."""
+    writable = writable or (lambda target: os.access(target, os.W_OK))
+    home = str(home)
+    home_mount = mount_of(home, mounts)
+    home_disk = disk_of(home_mount["source"], parents) if home_mount else None
+    free, total = (home_mount["avail"], home_mount["size"]) if home_mount else disk_space(home)
+    places = [{"kind": "home", "label": "Home drive", "path": f"{home.rstrip('/')}/Backups",
+               "avail": free, "size": total, "same_drive": True}]
+    for mount in mounts:
+        target = mount["target"]
+        if mount is home_mount or mount["fstype"] not in REAL_FILESYSTEMS:
+            continue
+        if not any(target.startswith(root + "/") for root in MOUNT_ROOTS) or not writable(target):
+            continue
+        disk = disk_of(mount["source"], parents)
+        places.append({"kind": "drive", "label": Path(target).name, "path": f"{target.rstrip('/')}/Backups",
+                       "avail": mount["avail"], "size": mount["size"],
+                       "same_drive": bool(disk) and disk == home_disk})
+    return places
+
+
+def place_for_path(path, mounts, home, parents=None):
+    """A backup place for a folder the user browsed to."""
+    path = str(path)
+    mount, home_mount = mount_of(path, mounts), mount_of(str(home), mounts)
+    if mount:
+        disk, home_disk = disk_of(mount["source"], parents), disk_of(home_mount["source"], parents) if home_mount else None
+        same = mount is home_mount or (bool(disk) and disk == home_disk)
+        free, total = mount["avail"], mount["size"]
+    else:
+        same = real_path(path).startswith(real_path(str(home)))
+        free, total = disk_space(path)
+    return {"kind": "custom", "label": Path(path).name or path, "path": path, "avail": free, "size": total,
+            "same_drive": same}
+
+
+def limit_range(avail):
+    """Smallest and largest backup size limit in GB for a drive with `avail` free bytes."""
+    if avail is None:
+        return BACKUP_MIN_GB, BACKUP_MAX_GB
+    high = max(1, min(BACKUP_MAX_GB, avail // GIB))
+    return min(BACKUP_MIN_GB, high), high
+
+
+def clamp_limit(value, avail):
+    low, high = limit_range(avail)
+    return max(low, min(high, int(value)))
+
+
+def load_backup():
+    try:
+        data = json.loads(BACKUP_FILE.read_text(encoding="utf-8"))
+        return {"enabled": bool(data["enabled"]), "destination": str(data["destination"]),
+                "max_gb": int(data["max_gb"])}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def read_backup_key():
+    status, key = run_cmd([*BACKUP_CMD, "key"])
+    return key.strip() if status == 0 else ""
+
+
+def apply_backup(enabled, destination, max_gb):
+    """Save the backup settings and switch backups on or off. Returns (ok, message, recovery key)."""
+    try:
+        write_json(BACKUP_FILE, {"enabled": bool(enabled), "destination": str(destination), "max_gb": int(max_gb)})
+    except OSError as error:
+        return False, f"Could not save the backup settings: {error}", ""
+    status, out = run_cmd([*BACKUP_CMD, "init" if enabled else "disable"], timeout=180)
+    if status == 127:
+        return False, "The backup tool is missing; your choice was saved", ""
+    if status != 0:
+        return False, out.splitlines()[-1] if out else "The backup tool reported an error", ""
+    if not enabled:
+        return True, "", ""
+    return True, "", read_backup_key()
+
+
+def check_online():
+    try:
+        socket.create_connection(("github.com", 443), timeout=4).close()
+        return True
+    except OSError:
+        return False
+
+
+def mark_done():
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        DONE_FILE.write_text(time.strftime("%Y-%m-%d %H:%M:%S") + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+# --- look ------------------------------------------------------------------
+
+TEXT = "#f2f2f3"
+MUTED = "#a6a6ae"
+FAINT = "#7c7c85"
+INK = "#111112"
+GOOD = "#74d391"
+WARN = "#f0b95c"
+BAD = "#ff8177"
+RADIUS = 24
+MARGIN = 26
+RAIL_WIDTH = 252
+
+ICONS = {
+    "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    "x": '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    "dot": '<circle cx="12" cy="12" r="2.6"/>',
+    "search": '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+    "down": '<path d="M6 9.5l6 6 6-6"/>',
+    "right": '<path d="M9.5 6l6 6-6 6"/>',
+    "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    "arrow-left": '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+    "moon": '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/>',
+    "globe": '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5'
+             'c-2.5-2.6-3.6-5.4-3.6-8.5S9.5 6.1 12 3.5z"/>',
+    "keyboard": '<rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M10.3 10.5h.01M13.7 10.5h.01'
+                'M17 10.5h.01M8 14h8"/>',
+    "clock": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    "pin": '<path d="M12 21s6.5-5.6 6.5-11a6.5 6.5 0 0 0-13 0c0 5.4 6.5 11 6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+    "cpu": '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><rect x="10" y="10" width="4" height="4" rx="0.5"/>'
+           '<path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
+    "memory": '<rect x="3" y="7.5" width="18" height="8.5" rx="1.5"/><path d="M7 10.5v2.5M11 10.5v2.5M15 10.5v2.5'
+              'M6 16v2.5M10 16v2.5M14 16v2.5M18 16v2.5"/>',
+    "monitor": '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M9 20.5h6M12 17v3.5"/>',
+    "grid": '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/>'
+            '<rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
+    "code": '<path d="M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5M13.5 5l-3 14"/>',
+    "terminal": '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7 9.5l3 2.5-3 2.5M12.5 14.5H17"/>',
+    "shield": '<path d="M12 3.5l7 2.5v5.5c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6z"/><path d="M9 12l2.2 2.2L15 10.2"/>',
+    "drive": '<path d="M4 14.5l2.2-8a1.5 1.5 0 0 1 1.45-1.1h8.7a1.5 1.5 0 0 1 1.45 1.1l2.2 8"/>'
+             '<rect x="3.5" y="14" width="17" height="5.5" rx="1.5"/><path d="M7 16.8h.01M10 16.8h.01"/>',
+    "home": '<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.8V19.5h12V9.8"/><path d="M10 19.5v-5h4v5"/>',
+    "folder": '<path d="M3.5 7.5a1 1 0 0 1 1-1h4.5l2 2h8.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/>',
+    "download": '<path d="M12 4v11M7.5 11l4.5 4.5 4.5-4.5M5 19.5h14"/>',
+    "wifi": '<path d="M3.5 9.5a12.5 12.5 0 0 1 17 0M6.5 13a8 8 0 0 1 11 0M9.5 16.3a3.6 3.6 0 0 1 5 0"/>'
+            '<path d="M12 19.5h.01"/>',
+    "wifi-off": '<path d="M6.5 13a8 8 0 0 1 4-2M9.5 16.3a3.6 3.6 0 0 1 5 0M14 9.3a12.3 12.3 0 0 1 6.5 .2'
+                'M3.5 9.5a12.5 12.5 0 0 1 3.3-2.3M4 4l16 16"/><path d="M12 19.5h.01"/>',
+    "alert": '<path d="M12 4.5l8.5 14.5h-17z"/><path d="M12 10v4M12 16.8h.01"/>',
+    "info": '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 7.8h.01"/>',
+    "lock": '<rect x="5.5" y="10.5" width="13" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+    "copy": '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M5.5 15.5H5A1.5 1.5 0 0 1 3.5 14V5'
+            'A1.5 1.5 0 0 1 5 3.5h9A1.5 1.5 0 0 1 15.5 5v.5"/>',
+    "refresh": '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/>',
+    "sparkle": '<path d="M11 4.5l1.7 4.6 4.6 1.7-4.6 1.7L11 17.1l-1.7-4.6-4.6-1.7 4.6-1.7z"/>'
+               '<path d="M18.5 15v4.5M16.25 17.25h4.5"/>',
+    "chat": '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V16.5H5'
+            'A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5z"/>',
+    "film": '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M10 9.2v5.6l4.8-2.8z"/>',
+    "pen": '<path d="M4.5 19.5l1-4.2L16 4.8a1.8 1.8 0 0 1 2.5 0l.7 .7a1.8 1.8 0 0 1 0 2.5L8.7 18.5z"/>'
+           '<path d="M14.5 6.5l3 3"/>',
+    "doc": '<path d="M7 3.5h7l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/>'
+           '<path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
+    "star": '<path d="M12 4l2.4 5 5.5 .7-4 3.9 1 5.4-4.9-2.6-4.9 2.6 1-5.4-4-3.9 5.5-.7z"/>',
+    "layers": '<path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/>',
+    "box": '<path d="M12 3.5l7.5 4.2v8.6L12 20.5l-7.5-4.2V7.7z"/><path d="M4.5 7.7L12 12l7.5-4.3M12 12v8.5"/>',
+    "bell": '<path d="M6 10a6 6 0 0 1 12 0c0 4.5 2 6 2 6H4s2-1.5 2-6"/><path d="M10 19.5a2 2 0 0 0 4 0"/>',
+}
+CATEGORY_ICONS = {"essentials": "star", "browsers": "globe", "chat": "chat", "office": "doc", "design": "pen",
+                  "media": "film", "ai": "sparkle", "development": "code", "terminal": "terminal", "vscode": "layers"}
+KIND_NAMES = {"flatpak": "Flatpak app", "brew": "Homebrew package", "npm": "npm package",
+              "vscode": "VS Code extensions", "script": "Developer tool", "setting": "Setting"}
+
+
+def white(alpha):
+    """Translucent white for style sheets; alpha is 0 to 255."""
+    return f"rgba(255, 255, 255, {alpha})"
+
+
+def svg(name, color, width=1.7):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round" '
+            f'stroke-linejoin="round">{ICONS[name]}</svg>')
+
+
+def pixmap(name, color=TEXT, size=18, width=1.7):
+    image = QPixmap(size * 2, size * 2)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    QSvgRenderer(QByteArray(svg(name, color, width).encode())).render(painter, QRectF(0, 0, size * 2, size * 2))
+    painter.end()
+    image.setDevicePixelRatio(2)
+    return image
+
+
+def icon(name, color=TEXT, size=18):
+    return QIcon(pixmap(name, color, size))
+
+
+def style_sheet():
+    return f"""
+    QWidget {{ color: {TEXT}; font-size: 13px; }}
+    QLabel {{ background: transparent; }}
+    QLabel:disabled {{ color: {FAINT}; }}
+    QLabel#brand {{ font-size: 16px; font-weight: 600; }}
+    QLabel#title {{ font-size: 30px; font-weight: 600; }}
+    QLabel#subtitle {{ color: {MUTED}; font-size: 14px; }}
+    QLabel#heading {{ font-size: 14px; font-weight: 600; }}
+    QLabel#big {{ font-size: 19px; font-weight: 600; }}
+    QLabel#clock {{ font-size: 44px; font-weight: 500; }}
+    QLabel#stat {{ font-size: 30px; font-weight: 600; }}
+    QLabel#muted {{ color: {MUTED}; }}
+    QLabel#small {{ color: {MUTED}; font-size: 12px; }}
+    QLabel#faint {{ color: {FAINT}; font-size: 12px; }}
+    QLabel#muted:disabled, QLabel#small:disabled {{ color: {FAINT}; }}
+    QLabel#section {{ color: {MUTED}; font-size: 11px; font-weight: 600; }}
+    QLabel#rowTitle {{ font-size: 13px; font-weight: 500; }}
+    QLabel#good {{ color: {GOOD}; }}
+    QLabel#warn {{ color: {WARN}; }}
+    QLabel#bad {{ color: {BAD}; font-size: 12px; }}
+    QLabel#mono {{ font-family: "JetBrains Mono", "Noto Sans Mono", "Cascadia Mono", monospace; font-size: 13px; }}
+    QLabel#chip {{ background: {white(16)}; border: 1px solid {white(20)}; border-radius: 11px;
+                   padding: 4px 10px; font-size: 12px; }}
+
+    QFrame#tile {{ background: {white(13)}; border: 1px solid {white(22)}; border-radius: 14px; }}
+    QFrame#well {{ background: rgba(0, 0, 0, 46); border: 1px solid {white(16)}; border-radius: 10px; }}
+    QFrame#iconTile {{ background: {white(18)}; border: 1px solid {white(24)}; border-radius: 10px; }}
+    QFrame#divider {{ background: {white(18)}; max-height: 1px; border: none; }}
+    QFrame#segmented {{ background: rgba(0, 0, 0, 40); border: 1px solid {white(20)}; border-radius: 11px; }}
+
+    QLineEdit {{ background: {white(14)}; border: 1px solid {white(24)}; border-radius: 10px;
+                 padding: 8px 11px; selection-background-color: {white(60)}; }}
+    QLineEdit:focus {{ border-color: {white(70)}; }}
+
+    QPushButton {{ background: {white(18)}; border: 1px solid {white(26)}; border-radius: 10px; padding: 8px 15px; }}
+    QPushButton:hover {{ background: {white(30)}; }}
+    QPushButton:pressed {{ background: {white(40)}; }}
+    QPushButton:disabled {{ color: {FAINT}; background: {white(8)}; border-color: {white(12)}; }}
+    QPushButton#primary {{ background: #f1f1f2; color: {INK}; border: none; font-weight: 600; padding: 10px 22px; }}
+    QPushButton#primary:hover {{ background: #ffffff; }}
+    QPushButton#primary:disabled {{ background: {white(40)}; color: rgba(17, 17, 18, 150); }}
+    QPushButton#nav {{ padding: 10px 18px; }}
+    QPushButton#link {{ background: transparent; border: none; color: {MUTED}; padding: 4px 8px; border-radius: 7px; }}
+    QPushButton#link:hover {{ background: {white(20)}; color: {TEXT}; }}
+    QPushButton#segment {{ background: transparent; border: none; border-radius: 8px; padding: 7px 16px;
+                           color: {MUTED}; }}
+    QPushButton#segment:hover {{ color: {TEXT}; }}
+    QPushButton#segment:checked {{ background: {white(40)}; color: {TEXT}; }}
+
+    QScrollArea {{ background: transparent; border: none; }}
+    QListWidget {{ background: transparent; border: none; outline: 0; }}
+    QListWidget::item {{ border-radius: 8px; padding: 7px 10px; }}
+    QListWidget::item:hover {{ background: {white(14)}; }}
+    QListWidget::item:selected {{ background: {white(34)}; color: {TEXT}; }}
+    QPlainTextEdit {{ background: rgba(0, 0, 0, 60); border: 1px solid {white(18)}; border-radius: 10px; padding: 6px;
+                      color: {MUTED}; font-size: 12px;
+                      font-family: "JetBrains Mono", "Noto Sans Mono", "Cascadia Mono", monospace; }}
+
+    QSlider::groove:horizontal {{ height: 4px; background: {white(40)}; border-radius: 2px; }}
+    QSlider::sub-page:horizontal {{ background: #e9e9ea; border-radius: 2px; }}
+    QSlider::handle:horizontal {{ background: #ffffff; width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; }}
+    QSlider::sub-page:horizontal:disabled {{ background: {white(60)}; }}
+    QSlider::handle:horizontal:disabled {{ background: #8a8a90; }}
+
+    QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+    QScrollBar::handle:vertical {{ background: {white(40)}; border-radius: 2px; min-height: 28px; }}
+    QScrollBar::handle:vertical:hover {{ background: {white(70)}; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+    QToolTip {{ background: #1b1b1d; color: {TEXT}; border: 1px solid #2f2f33; padding: 4px 6px; }}
+    QMessageBox {{ background: #17171a; }}
+    """
+
+
+def find_wallpaper():
+    for wanted in WALLPAPER_CHOICES:
+        for folder in WALLPAPER_DIRS:
+            for package in sorted(Path(folder).glob(wanted + "*")):
+                images = sorted(p for p in (package / "contents" / "images").glob("*")
+                                if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+                if images:
+                    return images[0]
+    return None
+
+
+def blurred(image, steps):
+    """A cheap blur: halve the image a few times, then double it back smoothly."""
+    size = image.size()
+    smooth = Qt.TransformationMode.SmoothTransformation
+    for _ in range(steps):
+        image = image.scaled(max(2, image.width() // 2), max(2, image.height() // 2),
+                             Qt.AspectRatioMode.IgnoreAspectRatio, smooth)
+    for _ in range(steps):
+        image = image.scaled(image.width() * 2, image.height() * 2, Qt.AspectRatioMode.IgnoreAspectRatio, smooth)
+    return image.scaled(size, Qt.AspectRatioMode.IgnoreAspectRatio, smooth)
+
+
+class Backdrop:
+    """The window background: a blurred wallpaper with one frosted glass card on it."""
+
+    def __init__(self):
+        image = self._load()
+        self.soft = blurred(image, 1)
+        self.frost = blurred(image, 5)
+        # Bright wallpapers are darkened more, so text on the glass stays readable.
+        mean = image.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation).pixelColor(0, 0)
+        self.brightness = (0.299 * mean.red() + 0.587 * mean.green() + 0.114 * mean.blue()) / 255
+
+    @staticmethod
+    def _load():
+        path = find_wallpaper()
+        if path:
+            reader = QImageReader(str(path))
+            if reader.size().isValid():
+                reader.setScaledSize(reader.size().scaled(640, 640, Qt.AspectRatioMode.KeepAspectRatio))
+            image = reader.read()
+            if not image.isNull():
+                return image.convertToFormat(QImage.Format.Format_RGB32)
+        image = QImage(640, 400, QImage.Format.Format_RGB32)
+        painter = QPainter(image)
+        base = QLinearGradient(0, 0, 640, 400)
+        base.setColorAt(0, QColor("#23262f"))
+        base.setColorAt(1, QColor("#0a0a0c"))
+        painter.fillRect(image.rect(), base)
+        glow = QRadialGradient(QPointF(170, 110), 300)
+        glow.setColorAt(0, QColor(110, 120, 150, 120))
+        glow.setColorAt(1, QColor(110, 120, 150, 0))
+        painter.fillRect(image.rect(), glow)
+        painter.end()
+        return image
+
+    def render(self, size, ratio, card, rail_width):
+        """The whole static background for a window of `size`, as one pixmap."""
+        canvas = QPixmap(size * ratio)
+        canvas.setDevicePixelRatio(ratio)
+        painter = QPainter(canvas)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        full = QRectF(0, 0, size.width(), size.height())
+
+        def cover(image):
+            scaled = image.size().scaled(size, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            painter.drawImage(QRectF((size.width() - scaled.width()) / 2, (size.height() - scaled.height()) / 2,
+                                     scaled.width(), scaled.height()), image)
+
+        cover(self.soft)
+        painter.fillRect(full, QColor(6, 6, 9, int(55 + 130 * self.brightness)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread in range(22, 0, -2):  # soft shadow under the card
+            painter.setBrush(QColor(0, 0, 0, 9))
+            painter.drawRoundedRect(card.adjusted(-spread, -spread + 6, spread, spread + 6),
+                                    RADIUS + spread, RADIUS + spread)
+
+        shape = QPainterPath()
+        shape.addRoundedRect(card, RADIUS, RADIUS)
+        painter.save()
+        painter.setClipPath(shape)
+        cover(self.frost)
+        painter.fillRect(card, QColor(20, 20, 24, int(138 + 70 * self.brightness)))
+        sheen = QRadialGradient(card.topLeft(), card.width() * 0.75)
+        sheen.setColorAt(0, QColor(255, 255, 255, 26))
+        sheen.setColorAt(1, QColor(255, 255, 255, 0))
+        painter.fillRect(card, sheen)
+        rail = QRectF(card.left(), card.top(), rail_width, card.height())
+        painter.fillRect(rail, QColor(0, 0, 0, 34))
+        painter.fillRect(QRectF(rail.right(), card.top(), 1, card.height()), QColor(255, 255, 255, 20))
+        painter.restore()
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        painter.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
+        edge = QLinearGradient(card.left(), 0, card.right(), 0)  # light catching the top edge
+        for stop, alpha in ((0, 0), (0.25, 80), (0.6, 46), (1, 0)):
+            edge.setColorAt(stop, QColor(255, 255, 255, alpha))
+        painter.setPen(QPen(QBrush(edge), 1))
+        painter.drawLine(QPointF(card.left() + RADIUS, card.top() + 0.5), QPointF(card.right() - RADIUS, card.top() + 0.5))
+        painter.end()
+        return canvas
+
+
+# --- widgets ---------------------------------------------------------------
+
+class Worker(QThread):
+    """Runs a slow function off the UI thread and hands its result back."""
+
+    result = pyqtSignal(object)
+    live = set()
+
+    def __init__(self, function, args):
+        super().__init__()
+        self.function, self.args = function, args
+
+    def run(self):
+        try:
+            value = self.function(*self.args)
+        except Exception as error:  # a broken probe must never take the wizard down
+            value = error
+        self.result.emit(value)
+
+
+def background(function, on_result, *args):
+    worker = Worker(function, args)
+    worker.result.connect(on_result)
+    worker.finished.connect(lambda: Worker.live.discard(worker))
+    Worker.live.add(worker)
+    worker.start()
+    return worker
+
+
+def wait_for_workers(milliseconds):
+    """Give running workers a moment to finish; True if none are left."""
+    deadline = time.monotonic() + milliseconds / 1000
+    for worker in list(Worker.live):
+        worker.wait(max(1, int((deadline - time.monotonic()) * 1000)))
+    return not any(worker.isRunning() for worker in Worker.live)
+
+
+def label(text="", name=None, wrap=False):
+    widget = QLabel(text)
+    if name:
+        widget.setObjectName(name)
+    widget.setWordWrap(wrap)
+    return widget
+
+
+def section(text):
+    widget = label(text.upper(), "section")
+    font = widget.font()
+    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.8)
+    widget.setFont(font)
+    return widget
+
+
+def glyph(name, color=TEXT, size=18):
+    widget = QLabel()
+    widget.setPixmap(pixmap(name, color, size))
+    widget.setFixedSize(size, size)
+    return widget
+
+
+def icon_tile(name, size=38, color=TEXT):
+    tile = QFrame()
+    tile.setObjectName("iconTile")
+    tile.setFixedSize(size, size)
+    inner = QLabel(tile)
+    inner.setPixmap(pixmap(name, color, 18))
+    inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    inner.setGeometry(0, 0, size, size)
+    return tile
+
+
+def fill(box, items):
+    """Add widgets, layouts, spacing (an int) or a stretch (None) to a layout."""
+    for item in items:
+        stretch = 0
+        if isinstance(item, tuple):
+            item, stretch = item
+        if item is None:
+            box.addStretch(1)
+        elif isinstance(item, int):
+            box.addSpacing(item)
+        elif isinstance(item, QLayout):
+            box.addLayout(item, stretch)
+        else:
+            box.addWidget(item, stretch)
+    return box
+
+
+def row(*items, spacing=10, margins=(0, 0, 0, 0)):
+    box = QHBoxLayout()
+    box.setSpacing(spacing)
+    box.setContentsMargins(*margins)
+    return fill(box, items)
+
+
+def column(*items, spacing=6, margins=(0, 0, 0, 0)):
+    box = QVBoxLayout()
+    box.setSpacing(spacing)
+    box.setContentsMargins(*margins)
+    return fill(box, items)
+
+
+def tile(layout, name="tile"):
+    frame = QFrame()
+    frame.setObjectName(name)
+    frame.setLayout(layout)
+    return frame
+
+
+def button(text, icon_name=None, name=None, color=TEXT):
+    widget = QPushButton(text)
+    if icon_name:
+        widget.setIcon(icon(icon_name, color, 16))
+        widget.setIconSize(QSize(16, 16))
+    if name:
+        widget.setObjectName(name)
+    widget.setCursor(Qt.CursorShape.PointingHandCursor)
+    return widget
+
+
+def scrolled(layout):
+    """Put a layout in a transparent scroll area, so small windows never clip a page."""
+    inner = QWidget()
+    inner.setLayout(layout)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setWidget(inner)
+    inner.setAutoFillBackground(False)
+    area.viewport().setAutoFillBackground(False)
+    return area
+
+
+class Elided(QLabel):
+    """A one-line label that shortens its text with an ellipsis instead of demanding width."""
+
+    def __init__(self, text="", name=None):
+        super().__init__(text)
+        if name:
+            self.setObjectName(name)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def minimumSizeHint(self):
+        return QSize(0, super().minimumSizeHint().height())
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        option = QStyleOption()
+        option.initFrom(self)
+        area = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, area.width())
+        self.style().drawItemText(painter, area, int(self.alignment()), option.palette,
+                                  self.isEnabled(), text, self.foregroundRole())
+        painter.end()
+
+
+class Toggle(QAbstractButton):
+    """A switch."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setFixedSize(38, 22)
+
+    def sizeHint(self):
+        return QSize(38, 22)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        on = self.isChecked()
+        painter.setOpacity(1.0 if self.isEnabled() else 0.45)
+        painter.setBrush(QColor("#f1f1f2") if on else QColor(255, 255, 255, 44))
+        painter.drawRoundedRect(QRectF(0, 0, 38, 22), 11, 11)
+        painter.setBrush(QColor(INK) if on else QColor("#b4b4ba"))
+        painter.drawEllipse(QRectF(19 if on else 3, 3, 16, 16))
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 1))
+            painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 21), 10.5, 10.5)
+        painter.end()
+
+
+class GlassButton(QAbstractButton):
+    """A clickable glass tile; the content is whatever layout it is given."""
+
+    def __init__(self, checkable=False, show_checked=True, radius=12):
+        super().__init__()
+        self.setCheckable(checkable)
+        self.show_checked = show_checked
+        self.radius = radius
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def set_content(self, layout):
+        self.setLayout(layout)
+        for child in self.findChildren(QWidget):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def sizeHint(self):
+        return self.layout().sizeHint() if self.layout() else QSize(120, 44)
+
+    def minimumSizeHint(self):
+        return self.layout().minimumSize() if self.layout() else QSize(60, 30)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        on = self.show_checked and self.isChecked()
+        hover = self.underMouse() and self.isEnabled()
+        painter.setOpacity(1.0 if self.isEnabled() else 0.55)
+        painter.setBrush(QColor(255, 255, 255, 36 if on else 24 if hover else 13))
+        painter.setPen(QPen(QColor(255, 255, 255, 190 if self.hasFocus() else 120 if on else 22), 1))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), self.radius, self.radius)
+        painter.end()
+
+
+class Choice(GlassButton):
+    """A selectable tile with a title, a second line and a check mark when chosen."""
+
+    def __init__(self, title, sub="", icon_name=None, right="", locked=False):
+        super().__init__(checkable=True)
+        self.locked = locked
+        self.mark = QLabel()
+        self.mark.setFixedSize(18, 18)
+        self.title = Elided(title, "rowTitle")
+        self.sub = Elided(sub, "small")
+        self.right = label(right, "small")
+        text = column(self.title, spacing=1)
+        if sub:
+            text.addWidget(self.sub)
+        items = [icon_tile(icon_name, 34)] if icon_name else []
+        self.set_content(row(*items, (text, 1), self.right, self.mark, spacing=11, margins=(12, 9, 12, 9)))
+        self.toggled.connect(self._show_mark)
+        if locked:  # always chosen: shown like the others, but clicks pass through
+            self.setChecked(True)
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._show_mark(locked)
+
+    def nextCheckState(self):
+        if not self.locked:
+            super().nextCheckState()
+
+    def _show_mark(self, on):
+        mark = pixmap("lock", MUTED, 16) if self.locked else pixmap("check", TEXT, 18, 2.2)
+        self.mark.setPixmap(mark if on else QPixmap())
+
+
+class AppTile(GlassButton):
+    """One catalog item: name, description and a switch. Clicking anywhere flips it."""
+
+    def __init__(self, item):
+        super().__init__(checkable=True, show_checked=False)
+        self.item = item
+        self.words = f"{item['name']} {item.get('description', '')}".lower()
+        self.switch = Toggle()
+        self.toggled.connect(self.switch.setChecked)
+        text = column(Elided(item["name"], "rowTitle"), Elided(item.get("description", ""), "small"), spacing=1)
+        self.set_content(row((text, 1), self.switch, spacing=10, margins=(14, 9, 12, 9)))
+        self.setFixedHeight(56)
+
+
+class Segmented(QFrame):
+    """A row of options of which one is chosen."""
+
+    changed = pyqtSignal(str)
+
+    def __init__(self, options, current):
+        super().__init__()
+        self.setObjectName("segmented")
+        self.group = QButtonGroup(self)
+        self.buttons = {}
+        box = row(spacing=2, margins=(3, 3, 3, 3))
+        for key, text in options:
+            item = button(text, name="segment")
+            item.setCheckable(True)
+            item.setChecked(key == current)
+            item.clicked.connect(lambda _on, k=key: self.changed.emit(k))
+            self.group.addButton(item)
+            self.buttons[key] = item
+            box.addWidget(item)
+        self.setLayout(box)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+    def value(self):
+        return next((key for key, item in self.buttons.items() if item.isChecked()), "")
+
+    def set_value(self, key):
+        if key in self.buttons:
+            self.buttons[key].setChecked(True)
+
+
+class Bar(QWidget):
+    """A thin progress bar; without a value it shows a sliding highlight."""
+
+    def __init__(self, height=6):
+        super().__init__()
+        self.setFixedHeight(height)
+        self.value = 0
+        self.busy = False
+        self.phase = 0.0
+        self.timer = QTimer(self)
+        self.timer.setInterval(30)
+        self.timer.timeout.connect(self._step)
+
+    def set_value(self, percent):
+        self.busy = False
+        self.timer.stop()
+        self.value = max(0, min(100, percent))
+        self.update()
+
+    def set_busy(self):
+        self.busy = True
+        if self.isVisible():
+            self.timer.start()
+        self.update()
+
+    def showEvent(self, _event):
+        if self.busy:
+            self.timer.start()
+
+    def hideEvent(self, _event):
+        self.timer.stop()
+
+    def _step(self):
+        self.phase = (self.phase + 0.018) % 1.0
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        area = QRectF(self.rect())
+        radius = area.height() / 2
+        painter.setBrush(QColor(255, 255, 255, 34))
+        painter.drawRoundedRect(area, radius, radius)
+        painter.setBrush(QColor("#f1f1f2"))
+        if self.busy:
+            width = area.width() * 0.28
+            clip = QPainterPath()
+            clip.addRoundedRect(area, radius, radius)
+            painter.setClipPath(clip)
+            painter.drawRoundedRect(QRectF(-width + (area.width() + width) * self.phase, 0, width, area.height()),
+                                    radius, radius)
+        elif self.value > 0:
+            painter.drawRoundedRect(QRectF(0, 0, max(area.height(), area.width() * self.value / 100), area.height()),
+                                    radius, radius)
+        painter.end()
+
+
+class RailItem(QAbstractButton):
+    """One step in the rail on the left: number or check mark, and the step name."""
+
+    def __init__(self, number, text):
+        super().__init__()
+        self.number, self.text_ = number, text
+        self.state = "todo"  # todo, current, done
+        self.reachable = False
+        self.setFixedHeight(40)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def set_state(self, state, reachable):
+        self.state, self.reachable = state, reachable
+        self.setCursor(Qt.CursorShape.PointingHandCursor if reachable else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def sizeHint(self):
+        return QSize(200, 40)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        area = QRectF(self.rect())
+        painter.setPen(Qt.PenStyle.NoPen)
+        if self.state == "current":
+            painter.setBrush(QColor(255, 255, 255, 28))
+            painter.drawRoundedRect(area.adjusted(0, 2, 0, -2), 11, 11)
+        elif self.reachable and self.underMouse():
+            painter.setBrush(QColor(255, 255, 255, 14))
+            painter.drawRoundedRect(area.adjusted(0, 2, 0, -2), 11, 11)
+
+        circle = QRectF(11, (area.height() - 24) / 2, 24, 24)
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        if self.state == "done":
+            painter.setBrush(QColor(255, 255, 255, 34))
+            painter.drawEllipse(circle)
+            painter.drawPixmap(QRectF(circle.left() + 5, circle.top() + 5, 14, 14), pixmap("check", TEXT, 14, 2.4),
+                               QRectF(0, 0, 28, 28))
+        else:
+            current = self.state == "current"
+            painter.setBrush(QColor("#f1f1f2") if current else Qt.BrushStyle.NoBrush)
+            painter.setPen(Qt.PenStyle.NoPen if current else QPen(QColor(255, 255, 255, 60), 1))
+            painter.drawEllipse(circle.adjusted(0.5, 0.5, -0.5, -0.5))
+            painter.setPen(QColor(INK) if current else QColor(MUTED))
+            painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, str(self.number))
+
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.DemiBold if self.state == "current" else QFont.Weight.Normal)
+        painter.setFont(font)
+        painter.setPen(QColor(TEXT) if self.state != "todo" else QColor(MUTED))
+        painter.drawText(area.adjusted(47, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         self.text_)
+        painter.end()
+
+
+# --- pages -----------------------------------------------------------------
+
+class Page(QWidget):
+    """One step of the wizard."""
+
+    name = ""        # in the rail
+    title = ""
+    subtitle = ""
+    next_label = "Continue"
+
+    def __init__(self, wizard):
+        super().__init__()
+        self.wizard = wizard
+
+    def on_show(self):
+        """Called every time the page comes up."""
+
+    def on_hide(self):
+        pass
+
+    def on_next(self):
+        """Called when Next is pressed; return False to stay on the page."""
+        return True
+
+    def can_next(self):
+        return True
+
+    def can_back(self):
+        return True
+
+
+class WelcomePage(Page):
+    name = "Welcome"
+    title = "Welcome to Darkn OS"
+    subtitle = "A few questions and this computer is set up the way you like it. Nothing is installed unless you choose it."
+    next_label = "Get started"
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        features = [
+            ("keyboard", "Language and keyboard", "Pick the layouts you type in and how to switch between them."),
+            ("clock", "Region and time", "Set the time zone, found automatically if you like."),
+            ("grid", "Apps and developer tools", "Choose exactly what gets installed. Everything is optional."),
+            ("shield", "Backups", "Decide whether, where and how much to back up."),
+        ]
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        for n, (icon_name, head, text) in enumerate(features):
+            box = column(row(icon_tile(icon_name, 40), None), 8, label(head, "heading"),
+                         label(text, "muted", wrap=True), None, spacing=3, margins=(18, 18, 18, 16))
+            grid.addWidget(tile(box), n // 2, n % 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
+        self.net_icon = QLabel()
+        self.net_icon.setFixedSize(18, 18)
+        self.net_title = label("Checking the internet connection", "rowTitle")
+        self.net_text = label("Apps are downloaded in the last step.", "small", wrap=True)
+        network = tile(row(self.net_icon, (column(self.net_title, self.net_text, spacing=1), 1),
+                           spacing=13, margins=(16, 12, 16, 12)))
+        self.setLayout(column((scrolled(column(grid, 2, network, None, spacing=12)), 1)))
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(6000)
+        self.timer.timeout.connect(self.check)
+        self.checking = False
+        self._set_network(None)
+
+    def on_show(self):
+        self.check()
+        self.timer.start()
+
+    def on_hide(self):
+        self.timer.stop()
+
+    def check(self):
+        if not self.checking:  # a lookup on a dead network can take a while
+            self.checking = True
+            background(check_online, self._set_network)
+
+    def _set_network(self, online):
+        self.checking = False
+        self.wizard.online = online if isinstance(online, bool) else None
+        if self.wizard.online is None:
+            self.net_icon.setPixmap(pixmap("wifi", MUTED))
+        elif online:
+            self.net_icon.setPixmap(pixmap("wifi", GOOD))
+            self.net_title.setText("Connected to the internet")
+            self.net_text.setText("Apps are downloaded in the last step.")
+        else:
+            self.net_icon.setPixmap(pixmap("wifi-off", WARN))
+            self.net_title.setText("No internet connection")
+            self.net_text.setText("You can go on and connect later: apps are only downloaded in the last step.")
+
+
+class LanguagePage(Page):
+    name = "Language"
+    title = "Language and keyboard"
+    subtitle = "The system stays in English. Add the keyboard layouts you type in."
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.initial = read_keyboard()
+        ids, switcher = self.initial
+
+        fixed = row(glyph("lock", MUTED, 14), label("Fixed", "small"), spacing=6)
+        language = tile(row(icon_tile("globe"),
+                            (column(label("English (United States)", "rowTitle"),
+                                    label("Menus and apps are shown in English. Other languages are added as "
+                                          "keyboard layouts.", "small", wrap=True), spacing=1), 1),
+                            fixed, spacing=13, margins=(14, 12, 16, 12)))
+
+        self.choices = {}
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        for n, (key, name, native, _code, _variant) in enumerate(LAYOUTS):
+            choice = Choice(name, "Always on" if key == "us" else native, locked=key == "us")
+            choice.setChecked(key == "us" or key in ids)
+            self.choices[key] = choice
+            grid.addWidget(choice, n // 3, n % 3)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+
+        self.switcher = Segmented([(s[0], s[1]) for s in SWITCHERS], switcher)
+        note = label("Meta + Space always switches layouts as well.", "small")
+        self.setLayout(column((scrolled(column(
+            section("System language"), language, 10,
+            section("Keyboard layouts"), grid, 10,
+            section("Switch layouts with"), row(self.switcher, note, None, spacing=14), None, spacing=9)), 1)))
+
+    def layouts(self):
+        return [key for key, choice in self.choices.items() if key == "us" or choice.isChecked()]
+
+    def changed(self):
+        return (self.layouts(), self.switcher.value()) != self.initial
+
+    def summary(self):
+        names = [layout[1] for layout in LAYOUTS if layout[0] in self.layouts()]
+        how = next(s[1] for s in SWITCHERS if s[0] == self.switcher.value())
+        return ", ".join(names), f"Switch with {how}"
+
+
+class RegionPage(Page):
+    name = "Region and time"
+    title = "Region and time"
+    subtitle = "Choose your time zone and how the clock is shown."
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.loaded = False
+        self.current = "UTC"
+        self.zone = "UTC"
+        self.initial_24 = read_clock()
+
+        self.clock = label("", "clock")
+        self.date = label("", "muted")
+        self.zone_label = label("", "rowTitle")
+        self.format = Segmented([("12", "12-hour"), ("24", "24-hour")], "24" if self.initial_24 else "12")
+        self.format.changed.connect(lambda _key: self._tick())
+        clock_tile = tile(column(row(glyph("pin", MUTED, 15), self.zone_label, None, spacing=7), 2, self.clock,
+                                 self.date, 12, self.format, 6,
+                                 label("The clock format takes effect the next time you log in.", "faint", wrap=True),
+                                 spacing=2, margins=(18, 16, 18, 16)))
+
+        self.detect_button = button("Detect automatically", "pin")
+        self.detect_button.clicked.connect(self.detect)
+        self.status = label("", "small", wrap=True)
+        note = label("Detection asks Fedora's location service (geoip.fedoraproject.org) where this network is. "
+                     "Only your IP address is sent.", "faint", wrap=True)
+        left = column(clock_tile, 6, row(self.detect_button, None), self.status, note, None, spacing=8)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search time zones")
+        self.search.addAction(icon("search", MUTED, 16), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        self.zones = QListWidget()
+        self.zones.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.zones.currentTextChanged.connect(self._picked)
+        right = tile(column(self.search, self.zones, spacing=8, margins=(10, 10, 10, 10)))
+
+        left_side = QWidget()
+        left_side.setLayout(left)
+        left_side.setFixedWidth(330)
+        self.setLayout(row(left_side, (right, 1), spacing=16))
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self._tick)
+        self._tick()
+
+    def on_show(self):
+        self.timer.start()
+        if not self.loaded:
+            self.loaded = True
+            background(load_time_info, self._loaded)
+
+    def on_hide(self):
+        self.timer.stop()
+
+    def _loaded(self, info):
+        if not isinstance(info, dict):
+            info = {"zones": ["UTC"], "current": "UTC"}
+        self.current = info["current"]
+        self.zones.addItems(info["zones"])
+        if not self.select(self.current):
+            self.zone = self.current
+            self._tick()
+        if self.wizard.first_run:
+            self.detect()
+
+    def select(self, zone):
+        found = self.zones.findItems(zone, Qt.MatchFlag.MatchExactly)
+        if not found:
+            return False
+        self.search.clear()
+        self.zones.setCurrentItem(found[0])
+        self.zones.scrollToItem(found[0], QAbstractItemView.ScrollHint.PositionAtCenter)
+        return True
+
+    def detect(self):
+        self.detect_button.setEnabled(False)
+        self.status.setText("Looking up where this network is…")
+        background(fetch_geoip, self._detected)
+
+    def _detected(self, found):
+        self.detect_button.setEnabled(True)
+        if isinstance(found, dict) and self.select(found["zone"]):
+            self.status.setText(f"Detected {found['place'] or found['zone']}.")
+        else:
+            self.status.setText("The location could not be detected. Pick your time zone from the list.")
+
+    def _picked(self, zone):
+        if zone:
+            self.zone = zone
+            self._tick()
+
+    def _filter(self, text):
+        words = text.lower().replace(" ", "_")
+        for index in range(self.zones.count()):
+            item = self.zones.item(index)
+            item.setHidden(words not in item.text().lower())
+
+    def hours24(self):
+        return self.format.value() == "24"
+
+    def _tick(self):
+        clock, date = format_clock(self.zone, self.hours24())
+        self.clock.setText(clock)
+        self.date.setText(date)
+        self.zone_label.setText(self.zone.replace("_", " "))
+
+    def summary(self):
+        return self.zone.replace("_", " "), "24-hour clock" if self.hours24() else "12-hour clock"
+
+
+class HardwarePage(Page):
+    name = "Hardware"
+    title = "Hardware"
+    subtitle = "A quick look at this computer and its graphics driver."
+
+    LEVELS = {"ok": ("check", GOOD), "warn": ("alert", WARN), "info": ("info", TEXT), "none": ("info", MUTED)}
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.info = None
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(26, 26)
+        self.status_title = label("Looking at the hardware…", "big")
+        self.status_text = label("", "muted", wrap=True)
+        self.hints = column(spacing=10)
+        head = row(self.status_icon, self.status_title, None, spacing=12)
+        self.banner = tile(column(head, self.status_text, self.hints, spacing=8, margins=(20, 18, 20, 18)))
+
+        self.values = {}
+        specs = QHBoxLayout()
+        specs.setSpacing(12)
+        for key, icon_name, head_text in (("cpu", "cpu", "Processor"), ("memory", "memory", "Memory"),
+                                          ("gpu", "monitor", "Graphics")):
+            value = label("…", "rowTitle", wrap=True)
+            self.values[key] = value
+            specs.addWidget(tile(column(row(icon_tile(icon_name, 34), label(head_text, "muted"), None, spacing=10), 4,
+                                        value, None, spacing=4, margins=(16, 14, 16, 14))), 1)
+
+        again = button("Check again", "refresh", "link", MUTED)
+        again.clicked.connect(self.detect)
+        self.setLayout(column((scrolled(column(self.banner, specs, row(again, None), None, spacing=12)), 1)))
+        self._show_level("none")
+
+    def on_show(self):
+        if self.info is None:
+            self.detect()
+
+    def detect(self):
+        background(detect_hardware, self.show_info)
+
+    def _show_level(self, level):
+        icon_name, color = self.LEVELS.get(level, self.LEVELS["none"])
+        self.status_icon.setPixmap(pixmap(icon_name, color, 26, 2.0))
+
+    def show_info(self, info):
+        if not isinstance(info, dict):
+            info = {"gpu": gpu_status(""), "cpu": "", "cores": 0, "memory": 0}
+        self.info = info
+        gpu = info["gpu"]
+        self._show_level(gpu["level"])
+        self.status_title.setText(gpu["title"])
+        self.status_text.setText(gpu["detail"])
+        while self.hints.count():
+            self.hints.takeAt(0).widget().deleteLater()
+        for hint in gpu["hints"]:
+            self.hints.addWidget(self._hint(hint))
+        cores = f"  ·  {info['cores']} threads" if info["cores"] else ""
+        self.values["cpu"].setText((info["cpu"] or "Unknown processor") + cores)
+        self.values["memory"].setText(f"{info['memory']} GB" if info["memory"] else "Unknown")
+        self.values["gpu"].setText("\n".join(gpu["gpus"]) or "Not detected")
+
+    def _hint(self, hint):
+        text = label(hint["text"], wrap=True)
+        head = row(label("Most likely here" if hint["likely"] else "Possible cause", "warn" if hint["likely"] else "small"),
+                   None)
+        box = column(head, text, spacing=4, margins=(14, 11, 14, 12))
+        if hint["command"]:
+            copy = button("Copy", "copy", "link", MUTED)
+            copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(hint["command"]))
+            box.addWidget(tile(row(label(hint["command"], "mono"), None, copy, margins=(12, 5, 6, 5)), "well"))
+        return tile(box, "well")
+
+    def summary(self):
+        gpu = (self.info or {}).get("gpu")
+        if not gpu:
+            return "Not checked", ""
+        names = sorted(gpu["gpus"], key=lambda name: not name.startswith("NVIDIA"))  # the one that matters first
+        more = f" and {len(names) - 1} more" if len(names) > 1 else ""
+        return (names[0] + more) if names else "No graphics card detected", gpu["title"]
+
+
+class CatalogPage(Page):
+    """A page of switches built from catalog groups: used for apps and for developer tools."""
+
+    noun = "app"
+
+    def __init__(self, wizard, groups, selected, intro=None):
+        super().__init__(wizard)
+        self.tiles = {}
+        self.groups = []  # (group, header widget, grid, tiles, count label)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search")
+        self.search.addAction(icon("search", MUTED, 16), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(280)
+        self.search.textChanged.connect(self._filter)
+        self.count = label("", "muted")
+        everything = button("Select all", name="link")
+        everything.clicked.connect(lambda: self._set_all(self.tiles.values(), True))
+        nothing = button("Select none", name="link")
+        nothing.clicked.connect(lambda: self._set_all(self.tiles.values(), False))
+        self.empty = label("Nothing matches the search." if groups else "The app catalog could not be read.", "muted")
+        self.empty.setVisible(not groups)
+
+        body = column(spacing=10, margins=(0, 0, 8, 0))
+        if intro is not None:
+            body.addWidget(intro)
+            body.addSpacing(4)
+        for group in groups:
+            tiles = []
+            for item in group["items"]:
+                app = AppTile(item)
+                app.setChecked(item["id"] in selected)
+                app.toggled.connect(self._changed)
+                self.tiles[item["id"]] = app
+                tiles.append(app)
+            count = label("", "small")
+            all_on = button("All", name="link")
+            all_on.clicked.connect(lambda _on=False, t=tiles: self._set_all(t, True))
+            all_off = button("None", name="link")
+            all_off.clicked.connect(lambda _on=False, t=tiles: self._set_all(t, False))
+            words = column(label(group["name"], "heading"), Elided(group.get("description", ""), "small"), spacing=1)
+            header = QWidget()
+            header.setLayout(row(icon_tile(CATEGORY_ICONS.get(group["id"], "box"), 34), (words, 1), count, 4,
+                                 all_on, all_off, spacing=6, margins=(0, 8, 0, 0)))
+            grid = QGridLayout()
+            grid.setSpacing(8)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            for n, app in enumerate(tiles):
+                grid.addWidget(app, n // 2, n % 2)
+            body.addWidget(header)
+            body.addLayout(grid)
+            self.groups.append((group, header, grid, tiles, count))
+        body.addWidget(self.empty)
+        body.addStretch(1)
+
+        top = row(self.search, None, self.count, 6, everything, nothing, spacing=4)
+        self.setLayout(column(top, (scrolled(body), 1), spacing=10))
+        self._changed()
+
+    def selected(self):
+        return {key for key, app in self.tiles.items() if app.isChecked()}
+
+    def _set_all(self, tiles, on):
+        for app in tiles:
+            if not app.isHidden() or not self.search.text():
+                app.setChecked(on)
+
+    def _changed(self, *_):
+        for _group, _header, _grid, tiles, count in self.groups:
+            count.setText(f"{sum(app.isChecked() for app in tiles)} of {len(tiles)}")
+        self.count.setText(f"{len(self.selected())} of {len(self.tiles)} selected")
+        self.wizard.refresh_nav()
+
+    def _filter(self, text):
+        words = text.lower().split()
+        anything = False
+        for _group, header, grid, tiles, _count in self.groups:
+            shown = [app for app in tiles if all(word in app.words for word in words)]
+            for app in tiles:
+                grid.removeWidget(app)
+                app.setVisible(app in shown)
+            for n, app in enumerate(shown):
+                grid.addWidget(app, n // 2, n % 2)
+            header.setVisible(bool(shown))
+            anything = anything or bool(shown)
+        self.empty.setVisible(not anything)
+        self._changed()
+
+    def summary(self):
+        names = [app.item["name"] for app in self.tiles.values() if app.isChecked()]
+        if not names:
+            return f"No {self.noun}s", "Nothing will be installed from this page"
+        rest = len(names) - 3
+        return plural(len(names), self.noun), ", ".join(names[:3]) + (f" and {rest} more" if rest > 0 else "")
+
+
+class AppsPage(CatalogPage):
+    name = "Apps"
+    title = "Apps"
+    subtitle = "Switch on what you want. Anything left off is simply not installed."
+    noun = "app"
+
+
+class DeveloperPage(CatalogPage):
+    name = "Developer tools"
+    title = "Developer tools"
+    subtitle = "Optional SDKs, command-line tools and editor extensions."
+    noun = "tool"
+
+    def __init__(self, wizard, groups, selected):
+        half = (len(SYSTEM_TOOLS) + 1) // 2
+        chips = column(row(*[label(t, "chip") for t in SYSTEM_TOOLS[:half]], None, spacing=6),
+                       row(*[label(t, "chip") for t in SYSTEM_TOOLS[half:]], None, spacing=6), spacing=6)
+        words = column(label("Already part of the system", "heading"),
+                       label("These come with Darkn OS; there is nothing to install.", "small"), spacing=1)
+        intro = tile(column(row(icon_tile("check", 34, GOOD), (words, 1), spacing=12), 4, chips, spacing=6,
+                            margins=(14, 13, 14, 14)))
+        super().__init__(wizard, groups, selected, intro)
+
+
+class BackupPage(Page):
+    name = "Backups"
+    title = "Backups"
+    subtitle = "Keep earlier versions of your files, so a mistake is never final."
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.initial = load_backup()
+        saved = self.initial or {"enabled": True, "destination": "", "max_gb": BACKUP_DEFAULT_GB}
+        self.wanted_gb = saved["max_gb"]
+        self.wanted_path = saved["destination"]
+        self.loaded = False
+        self.mounts, self.parents, self.places = [], {}, []
+
+        self.enabled = Toggle()
+        self.enabled.setChecked(saved["enabled"])
+        self.enabled.toggled.connect(self._enabled_changed)
+        head = tile(row(icon_tile("shield"),
+                        (column(label("Back up my home folder", "rowTitle"),
+                                label("Encrypted and automatic, once a day. After the first run only changes are stored.",
+                                      "small", wrap=True), spacing=1), 1),
+                        self.enabled, spacing=13, margins=(14, 12, 16, 12)))
+
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self.place_box = column(spacing=8)
+        self.browse = button("Browse…", "folder")
+        self.browse.clicked.connect(self._browse)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(BACKUP_MIN_GB, BACKUP_MAX_GB)
+        self.slider.setValue(self.wanted_gb)
+        self.slider.valueChanged.connect(self._limit_moved)
+        self.limit = label("", "heading")
+        self.limit.setFixedWidth(64)
+        self.limit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.limit_note = label("The oldest backups are removed when the limit is reached.", "small")
+
+        self.warning_text = label("", wrap=True)
+        self.warning = tile(row(glyph("alert", WARN, 18), (self.warning_text, 1), spacing=12, margins=(14, 11, 14, 11)),
+                            "well")
+
+        self.options = QWidget()
+        self.options.setLayout(column(
+            section("Where to keep them"), self.place_box, row(self.browse, None), 8,
+            section("Size limit"), row((self.slider, 1), self.limit, spacing=12), self.limit_note, 6,
+            self.warning, spacing=9))
+        self.setLayout(column((scrolled(column(head, 6, self.options, None, spacing=8, margins=(0, 0, 8, 0))), 1)))
+        self.show_places(backup_places([], HOME))
+        self._enabled_changed(self.enabled.isChecked())
+
+    def on_show(self):
+        if not self.loaded:
+            self.loaded = True
+            background(self._detect, self._detected)
+
+    @staticmethod
+    def _detect():
+        columns = ["-b", "-o", "TARGET,SOURCE,FSTYPE,AVAIL,SIZE"]
+        status, out = run_cmd(["findmnt", "-J", "-l", *columns])
+        if status not in (0, 127):  # in case this findmnt refuses --list with --json
+            status, out = run_cmd(["findmnt", "-J", *columns])
+        mounts = parse_findmnt(out) if status == 0 else []
+        status, out = run_cmd(["lsblk", "-J", "-l", "-o", "PATH,KNAME,PKNAME"])
+        return mounts, parse_lsblk(out) if status == 0 else {}
+
+    def _detected(self, found):
+        if isinstance(found, tuple):
+            self.mounts, self.parents = found
+        self.show_places(backup_places(self.mounts, HOME, self.parents))
+
+    def show_places(self, places):
+        """Rebuild the destination list, keeping the current choice when it still exists."""
+        keep = self.destination() if self.places else self.wanted_path
+        if keep and keep not in [p["path"] for p in places]:
+            places = places + [place_for_path(keep, self.mounts, HOME, self.parents)]
+        while self.place_box.count():
+            old = self.place_box.takeAt(0).widget()
+            self.group.removeButton(old)
+            old.deleteLater()
+        self.places = places
+        for n, place in enumerate(places):
+            free = f"{fmt_size(place['avail'])} free" if place["avail"] is not None else ""
+            choice = Choice(place["label"], place["path"], "home" if place["kind"] == "home" else "drive", free)
+            choice.setChecked(place["path"] == keep or (not keep and n == 0))
+            choice.toggled.connect(self._place_changed)
+            self.group.addButton(choice, n)
+            self.place_box.addWidget(choice)
+        if self.group.checkedId() < 0:
+            self.group.button(0).setChecked(True)
+        self._place_changed()
+
+    def place(self):
+        index = self.group.checkedId()
+        return self.places[index if 0 <= index < len(self.places) else 0]
+
+    def destination(self):
+        return self.place()["path"]
+
+    def max_gb(self):
+        return self.slider.value()
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(self, "Choose a folder for backups", str(HOME))
+        if folder:
+            self.add_custom(folder)
+
+    def add_custom(self, folder):
+        self.wanted_path = folder
+        places = [p for p in self.places if p["kind"] != "custom" and p["path"] != folder]
+        self.places = []  # forget the current choice: the new folder is the choice
+        self.show_places(places + [place_for_path(folder, self.mounts, HOME, self.parents)])
+
+    def _place_changed(self, *_):
+        place = self.place()
+        low, high = limit_range(place["avail"])
+        self.slider.blockSignals(True)
+        self.slider.setRange(low, high)
+        self.slider.setValue(clamp_limit(self.wanted_gb, place["avail"]))
+        self.slider.blockSignals(False)
+        self.limit.setText(f"{self.slider.value()} GB")
+        if place["avail"] is not None and place["avail"] // GIB < BACKUP_MIN_GB:
+            self.limit_note.setText("There is very little free space here; consider another drive.")
+        else:
+            self.limit_note.setText("The oldest backups are removed when the limit is reached.")
+        self.warning.setVisible(bool(place["same_drive"]))
+        self.warning_text.setText(
+            "This is the same drive as your home folder. It protects you from deleting or breaking files, "
+            "but not from the drive itself failing. For that, choose another drive.")
+        self.wizard.refresh_nav()
+
+    def _limit_moved(self, value):
+        self.wanted_gb = value
+        self.limit.setText(f"{value} GB")
+
+    def _enabled_changed(self, on):
+        self.options.setEnabled(on)
+        self.wizard.refresh_nav()
+
+    def settings(self):
+        return {"enabled": self.enabled.isChecked(), "destination": self.destination(), "max_gb": self.max_gb()}
+
+    def changed(self):
+        return self.settings() != self.initial
+
+    def summary(self):
+        if not self.enabled.isChecked():
+            return "Off", "No backups are made"
+        return f"On, up to {self.max_gb()} GB", self.destination()
+
+
+class ItemRow(QWidget):
+    """One line of the install list."""
+
+    STATES = {
+        "waiting": ("dot", FAINT, "Waiting"),
+        "installing": ("arrow-right", TEXT, "Installing"),
+        "done": ("check", GOOD, "Done"),
+        "skipped": ("check", MUTED, "Already installed"),
+        "unchanged": ("check", MUTED, "No change"),
+        "failed": ("x", BAD, "Failed"),
+    }
+
+    def __init__(self, name, kind):
+        super().__init__()
+        self.name, self.kind, self.state, self.error = name, kind, "waiting", ""
+        self.mark = QLabel()
+        self.mark.setFixedSize(16, 16)
+        self.title = Elided(name, "rowTitle")
+        self.note = label("", "small")
+        self.problem = Elided("", "bad")
+        self.problem.hide()
+        self.setLayout(column(row(self.mark, (self.title, 1), self.note, spacing=11), self.problem, spacing=2,
+                              margins=(12, 7, 12, 7)))
+        self.problem.setContentsMargins(27, 0, 0, 0)
+        self.set_state("waiting")
+
+    def set_state(self, state, error=""):
+        self.state, self.error = state, error
+        icon_name, color, text = self.STATES[state]
+        self.mark.setPixmap(pixmap(icon_name, color, 16, 2.0))
+        self.note.setText(text)
+        self.title.setEnabled(state != "waiting")
+        self.problem.setText(error)
+        self.problem.setToolTip(error)
+        self.problem.setVisible(bool(error))
+
+
+class InstallPage(Page):
+    name = "Install"
+    title = "Review and install"
+    subtitle = "Check your choices, then let Darkn OS set everything up."
+
+    SETTINGS = [("_keyboard", "Keyboard layouts"), ("_region", "Region and time"), ("_backup", "Backups")]
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.running = False
+        self.started = False     # Install was pressed at least once
+        self.finished = False
+        self.rows = {}           # id -> ItemRow, in order
+        self.results = {}        # id -> {"name", "kind", "state", "error"}
+        self.backup_key = ""
+        self.process = None
+        self.buffer = b""
+        self.choices = None
+        self.pending_settings = []
+        self.got_finished = False
+        self.fatal = ""
+        self.retry = False
+
+        # review
+        self.cards = QGridLayout()
+        self.cards.setSpacing(12)
+        self.cards.setColumnStretch(0, 1)
+        self.cards.setColumnStretch(1, 1)
+        self.notice_icon = QLabel()
+        self.notice_icon.setFixedSize(18, 18)
+        self.notice = label("", "muted", wrap=True)
+        notice = tile(row(self.notice_icon, (self.notice, 1), spacing=12, margins=(16, 12, 16, 12)), "well")
+        review = QWidget()
+        review.setLayout(column((scrolled(column(self.cards, notice, None, spacing=12, margins=(0, 0, 8, 0))), 1)))
+
+        # progress
+        self.current = Elided("", "big")
+        self.counter = label("", "rowTitle")
+        self.detail = Elided("", "small")
+        self.item_bar = Bar(6)
+        self.total_bar = Bar(10)
+        top = tile(column(self.current, self.detail, 6, self.item_bar, 10,
+                          row(label("Overall", "small"), None, self.counter), self.total_bar,
+                          spacing=4, margins=(20, 16, 20, 18)))
+        self.list_box = column(spacing=0, margins=(4, 4, 4, 4))
+        self.list_box.addStretch(1)
+        self.list_area = scrolled(self.list_box)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(4000)
+        self.log.setFixedHeight(150)
+        self.log.hide()
+        self.details = button("Details", "right", "link", MUTED)
+        self.details.setCheckable(True)
+        self.details.toggled.connect(self._toggle_details)
+        progress = QWidget()
+        progress.setLayout(column(top, (tile(column((self.list_area, 1), margins=(2, 2, 2, 2))), 1),
+                                  row(self.details, None), self.log, spacing=10))
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(review)
+        self.stack.addWidget(progress)
+        self.setLayout(column((self.stack, 1)))
+
+    # which view
+
+    def on_show(self):
+        came_back = self.wizard.previous is self.wizard.done_page
+        if self.running or (self.finished and came_back):
+            self.stack.setCurrentIndex(1)
+        else:
+            self.stack.setCurrentIndex(0)
+            self._build_review()
+        self._retitle()
+
+    def _retitle(self):
+        if self.stack.currentIndex() == 0:
+            self.wizard.set_heading(self.title, self.subtitle)
+        elif self.running:
+            self.wizard.set_heading("Installing", "You can keep using the computer. Closing this window continues "
+                                                  "in the background.")
+        elif self.fatal:
+            self.wizard.set_heading("Installation stopped", f"{self.fatal.rstrip('.')}. Try again, or close this window "
+                                                            "and the rest is installed in the background later.")
+        else:
+            failed = sum(1 for r in self.results.values() if r["state"] == "failed")
+            self.wizard.set_heading("Installation finished",
+                                    f"{plural(failed, 'item')} could not be set up; see the next page."
+                                    if failed else "Everything was set up.")
+
+    def can_next(self):
+        return not self.running
+
+    def can_back(self):
+        return not self.running
+
+    @property
+    def next_label(self):
+        if self.running:
+            return "Installing…"
+        if self.stack.currentIndex() == 0:
+            return "Install" if self.wizard.selection() else "Apply"
+        return "Try again" if self.fatal else "Continue"
+
+    def on_next(self):
+        if self.running:
+            return False
+        if self.stack.currentIndex() == 0 or self.fatal:
+            self.start()
+            return False
+        return True
+
+    def _build_review(self):
+        while self.cards.count():
+            self.cards.takeAt(0).widget().deleteLater()
+        wizard = self.wizard
+        cards = [
+            ("keyboard", "Keyboard", wizard.language, wizard.language.summary()),
+            ("clock", "Region and time", wizard.region, wizard.region.summary()),
+            ("grid", "Apps", wizard.apps, wizard.apps.summary()),
+            ("code", "Developer tools", wizard.developer, wizard.developer.summary()),
+            ("shield", "Backups", wizard.backup, wizard.backup.summary()),
+            ("monitor", "Graphics", wizard.hardware, wizard.hardware.summary()),
+        ]
+        for n, (icon_name, head, page, (main, sub)) in enumerate(cards):
+            change = button("Change", name="link")
+            change.clicked.connect(lambda _on=False, p=page: wizard.go(wizard.pages.index(p)))
+            words = column(row(label(head, "small"), None), Elided(main, "heading"), Elided(sub, "small"), spacing=2)
+            self.cards.addWidget(tile(row(icon_tile(icon_name), (words, 1), change, spacing=13, margins=(14, 13, 8, 13))),
+                                 n // 2, n % 2)
+        if wizard.online is False:
+            self.notice_icon.setPixmap(pixmap("wifi-off", WARN))
+            self.notice.setText("There is no internet connection right now. Your settings are applied either way; "
+                                "the apps are downloaded as soon as the computer is online.")
+        else:
+            self.notice_icon.setPixmap(pixmap("download", MUTED))
+            self.notice.setText("Downloading can take a while. You can keep using the computer, and if you close "
+                                "this window the installation continues in the background.")
+
+    # running
+
+    def start(self, retry=False):
+        """Apply the settings, then hand the selection to the install engine."""
+        wizard = self.wizard
+        self.running, self.started, self.finished, self.fatal = True, True, False, ""
+        self.retry = retry
+        self.got_finished = False
+        if retry:
+            self.pending_settings = [s for s in self.SETTINGS if self.results.get(s[0], {}).get("state") == "failed"]
+            failed = {key: r for key, r in self.results.items() if r["state"] == "failed" and not key.startswith("_")}
+            for key in [s[0] for s in self.pending_settings] + list(failed):
+                self._mark(key, "waiting")
+        else:
+            self.choices = wizard.choices()
+            try:
+                chosen = save_selection(self.choices["selected"], wizard.catalog)
+            except OSError as error:
+                chosen = []
+                self._log(f"Could not save the selection: {error}")
+            self.pending_settings = list(self.SETTINGS)
+            self.results = {}
+            self.log.clear()
+            items = [{"id": key, "name": name, "kind": "setting"} for key, name in self.SETTINGS]
+            names = {i["id"]: i for c in wizard.catalog for i in c["items"]}
+            items += [{"id": key, "name": names[key]["name"], "kind": names[key]["kind"]} for key in chosen]
+            self._set_rows(items)
+        self.stack.setCurrentIndex(1)
+        self._progress()
+        self._retitle()
+        wizard.refresh_nav()
+        self._next_setting()
+
+    def _set_rows(self, items):
+        while self.list_box.count() > 1:
+            self.list_box.takeAt(0).widget().deleteLater()
+        self.rows = {}
+        for item in items:
+            line = ItemRow(item["name"], item["kind"])
+            self.rows[item["id"]] = line
+            self.list_box.insertWidget(self.list_box.count() - 1, line)
+            self.results[item["id"]] = {"name": item["name"], "kind": item["kind"], "state": "waiting", "error": ""}
+
+    def _mark(self, key, state, error=""):
+        if key not in self.rows:
+            return
+        self.rows[key].set_state(state, error)
+        self.results[key].update(state=state, error=error)
+        if state == "installing":
+            self.current.setText(self.rows[key].name)
+            self.detail.setText(KIND_NAMES.get(self.rows[key].kind, ""))
+            self.item_bar.set_busy()
+            self.list_area.ensureWidgetVisible(self.rows[key], 0, 60)
+        self._progress()
+
+    def _progress(self):
+        states = [r["state"] for r in self.results.values()]
+        finished = sum(1 for s in states if s not in ("waiting", "installing"))
+        self.counter.setText(f"{finished} of {len(states)}")
+        self.total_bar.set_value(finished * 100 // len(states) if states else 100)
+
+    def _log(self, line):
+        self.log.appendPlainText(line)
+
+    def _toggle_details(self, on):
+        self.details.setIcon(icon("down" if on else "right", MUTED, 16))
+        self.log.setVisible(on)
+
+    def _next_setting(self):
+        if not self.pending_settings:
+            self._start_engine()
+            return
+        key, name = self.pending_settings.pop(0)
+        choices = self.choices
+        self._mark(key, "installing")
+        if key == "_keyboard":
+            if not choices["keyboard_changed"]:
+                return self._setting_done(key, None)
+            job = (apply_keyboard, choices["layouts"], choices["switcher"])
+        elif key == "_region":
+            if choices["zone"] == choices["current_zone"] and not choices["clock_changed"]:
+                return self._setting_done(key, None)
+            job = (apply_region, choices["zone"], choices["current_zone"], choices["hours24"], choices["clock_changed"])
+            if choices["zone"] != choices["current_zone"]:
+                self.detail.setText("Setting the time zone; the system may ask for your password")
+        else:
+            backup = choices["backup"]
+            if choices["backup_changed"]:
+                job = (apply_backup, backup["enabled"], backup["destination"], backup["max_gb"])
+            elif backup["enabled"]:  # nothing to change, but the last page still shows the key
+                job = (lambda: (None, "", read_backup_key()),)
+            else:
+                return self._setting_done(key, None)
+        background(job[0], lambda result, k=key: self._setting_done(k, result), *job[1:])
+
+    def _setting_done(self, key, result):
+        """Record how a settings step went: None or (ok, message[, backup key]); ok None means unchanged."""
+        if not self.running:
+            return  # the window is closing
+        if isinstance(result, Exception):
+            self._mark(key, "failed", str(result))
+        elif result is None or result[0] is None:
+            self._mark(key, "unchanged")
+        else:
+            self._mark(key, "done" if result[0] else "failed", result[1])
+            if result[1]:
+                self._log(f"[{self.rows[key].name}] {result[1]}")
+        if key == "_backup" and isinstance(result, tuple) and len(result) > 2:
+            self.backup_key = result[2]
+        self._next_setting()
+
+    def _start_engine(self):
+        self.current.setText("Preparing")
+        self.detail.setText("Starting the installer")
+        self.item_bar.set_busy()
+        self.buffer = b""
+        if self.process is not None:
+            self.process.deleteLater()
+        self.process = QProcess(self)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.readyReadStandardOutput.connect(self._read)
+        self.process.finished.connect(lambda *_: self._engine_exited())
+        self.process.errorOccurred.connect(self._engine_error)
+        args = ["--json"] + (["--retry-failed"] if self.retry else [])
+        self.process.start(ENGINE_CMD[0], [*ENGINE_CMD[1:], *args])
+
+    def _engine_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self.fatal = "The installer could not be started."
+            self._log(f"Could not start {ENGINE_CMD[0]}")
+            self._finish()
+
+    def _read(self):
+        if self.process is None:
+            return
+        self.buffer += bytes(self.process.readAllStandardOutput())
+        *lines, self.buffer = self.buffer.split(b"\n")
+        for raw in lines:
+            text = raw.decode("utf-8", "replace").strip()
+            if not text:
+                continue
+            try:
+                event = json.loads(text)
+            except ValueError:
+                event = None
+            if isinstance(event, dict) and "event" in event:
+                self.handle_event(event)
+            else:
+                self._log(text)  # a traceback or other stray output
+
+    def handle_event(self, event):
+        """React to one progress event from the install engine."""
+        kind, key = event.get("event"), event.get("id")
+        if kind == "plan":
+            known = set(self.rows)
+            for item in event.get("items", []):
+                if item["id"] not in known:  # the engine knows best; show what it adds
+                    line = ItemRow(item["name"], item["kind"])
+                    self.rows[item["id"]] = line
+                    self.list_box.insertWidget(self.list_box.count() - 1, line)
+                    self.results[item["id"]] = {"name": item["name"], "kind": item["kind"], "state": "waiting",
+                                                "error": ""}
+            self._progress()
+        elif kind == "start":
+            self._mark(key, "installing")
+        elif kind == "progress":
+            if self.results.get(key, {}).get("state") == "installing":
+                self.item_bar.set_value(int(event.get("percent", 0)))
+        elif kind == "log":
+            line = str(event.get("line", ""))
+            name = self.rows[key].name if key in self.rows else "installer"
+            self._log(f"[{name}] {line}")
+            if key is None or self.results.get(key, {}).get("state") == "installing":
+                self.detail.setText(line)
+        elif kind == "done":
+            self._mark(key, "skipped" if event.get("skipped") else "done")
+        elif kind == "failed":
+            self._mark(key, "failed", str(event.get("error", "")))
+            self._log(f"[{self.rows[key].name if key in self.rows else key}] FAILED: {event.get('error', '')}")
+        elif kind == "fatal":
+            self.fatal = str(event.get("error", "The installer stopped"))
+            self._log(f"Error: {self.fatal}")
+        elif kind == "finished":
+            self.got_finished = True
+
+    def _engine_exited(self):
+        if not self.running:
+            return
+        self._read()
+        if not self.got_finished and not self.fatal:
+            self.fatal = "The installer stopped unexpectedly. Open Details to see why."
+        self._finish()
+
+    def _finish(self):
+        if not self.running:
+            return
+        self.running = False
+        self.finished = not self.fatal
+        for key, result in self.results.items():
+            if result["state"] == "installing":
+                self.rows[key].set_state("waiting")
+                result["state"] = "waiting"
+        failed = [r for r in self.results.values() if r["state"] == "failed"]
+        if self.fatal:
+            self.current.setText("Installation stopped")
+            self.detail.setText(self.fatal)
+        else:
+            self.current.setText("All done" if not failed else f"Finished with {plural(len(failed), 'problem')}")
+            self.detail.setText("Continue to see the summary.")
+        self.item_bar.set_value(100 if not self.fatal else 0)
+        self._progress()
+        self._retitle()
+        self.wizard.refresh_nav()
+
+    def continue_in_background(self):
+        """Stop our engine, if it runs, and let the user service carry on with the rest."""
+        self.running = False
+        if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
+            self.process.terminate()
+            if not self.process.waitForFinished(STOP_WAIT_MS):
+                self.process.kill()
+                self.process.waitForFinished(2000)
+        status, _ = run_cmd(["systemctl", "--user", "start", "--no-block", RESUME_UNIT], timeout=8)
+        if status != 0:
+            QProcess.startDetached(ENGINE_CMD[0], [*ENGINE_CMD[1:], "--resume"])
+
+
+class DonePage(Page):
+    name = "Done"
+    title = "You're all set"
+    subtitle = "Darkn OS is ready. Here is what happened."
+    next_label = "Finish"
+
+    def __init__(self, wizard):
+        super().__init__(wizard)
+        self.area = scrolled(column())
+        self.setLayout(column((self.area, 1)))
+        self.retry = None
+
+    def on_show(self):
+        self.body = column(spacing=12, margins=(0, 0, 8, 0))
+        self.retry = None
+        install = self.wizard.install
+        results = install.results
+        count = lambda *states: sum(1 for r in results.values() if r["state"] in states)
+        failed = [r for r in results.values() if r["state"] == "failed"]
+
+        stats = QHBoxLayout()
+        stats.setSpacing(12)
+        for number, text, color in ((count("done"), "set up", GOOD), (count("skipped", "unchanged"), "already in place", TEXT),
+                                    (len(failed), "failed", BAD if failed else MUTED)):
+            value = label(str(number), "stat")
+            value.setStyleSheet(f"color: {color};")
+            stats.addWidget(tile(column(value, label(text, "muted"), spacing=0, margins=(18, 12, 18, 14))), 1)
+        self.body.addLayout(stats)
+
+        if failed:
+            self.retry = button("Retry failed", "refresh")
+            self.retry.clicked.connect(self.wizard.retry_failed)
+            lines = column(row(glyph("alert", WARN, 18), label("These could not be set up", "heading"), None, self.retry,
+                               spacing=10), spacing=8, margins=(16, 12, 12, 14))
+            for result in failed:
+                lines.addLayout(column(label(result["name"], "rowTitle"), label(result["error"], "bad", wrap=True),
+                                       spacing=1, margins=(28, 0, 0, 0)))
+            self.body.addWidget(tile(lines))
+
+        if install.backup_key:
+            copy = button("Copy", "copy")
+            copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(install.backup_key))
+            key = label(install.backup_key, "mono")
+            key.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.body.addWidget(tile(column(
+                row(icon_tile("lock", 34), (column(label("Backup recovery key", "heading"),
+                                                   label("You need this key to restore your backups if this computer is "
+                                                         "lost or reinstalled. Keep a copy somewhere else.", "small",
+                                                         wrap=True), spacing=1), 1), spacing=12),
+                tile(row((key, 1), copy, spacing=10, margins=(12, 6, 6, 6)), "well"),
+                spacing=10, margins=(14, 13, 14, 14))))
+
+        tips = column(label("Good to know", "heading"), spacing=9, margins=(16, 13, 16, 15))
+        for icon_name, text in (("keyboard", "Press Meta + F1 for the list of keyboard shortcuts."),
+                                ("bell", "The Notification Sounds app gives each app its own sound."),
+                                ("refresh", "Run darkn-setup to open this wizard again and add or retry apps.")):
+            tips.addLayout(row(glyph(icon_name, MUTED, 17), (label(text, wrap=True), 1), spacing=11))
+        self.body.addWidget(tile(tips))
+        self.body.addStretch(1)
+        content = QWidget()
+        content.setLayout(self.body)
+        self.area.setWidget(content)  # replaces, and deletes, what was shown before
+        content.setAutoFillBackground(False)
+
+    def on_next(self):
+        self.wizard.finish()
+        return False
+
+
+# --- window ----------------------------------------------------------------
+
+class Wizard(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Darkn OS Setup")
+        self.setWindowIcon(QIcon.fromTheme("preferences-system"))
+        self.resize(1180, 760)
+        self.setMinimumSize(1000, 680)
+        self.first_run = not DONE_FILE.exists()
+        self.online = None
+        self.previous = None
+        self.backdrop = Backdrop()
+        self.canvas = None
+        self.confirm_close = self._ask_close
+
+        self.catalog = load_catalog()
+        apps, dev = split_catalog(self.catalog)
+        selected = load_selection(self.catalog)
+
+        self.welcome = WelcomePage(self)
+        self.language = LanguagePage(self)
+        self.region = RegionPage(self)
+        self.hardware = HardwarePage(self)
+        self.apps = AppsPage(self, apps, selected)
+        self.developer = DeveloperPage(self, dev, selected)
+        self.backup = BackupPage(self)
+        self.install = InstallPage(self)
+        self.done_page = DonePage(self)
+        self.pages = [self.welcome, self.language, self.region, self.hardware, self.apps, self.developer,
+                      self.backup, self.install, self.done_page]
+        self.visited = 0
+
+        # rail
+        brand = row(icon_tile("moon", 38), column(label("Darkn OS", "brand"), label("Setup", "small"), spacing=0),
+                    None, spacing=12, margins=(11, 0, 0, 0))
+        self.rail = []
+        steps = column(spacing=2)
+        for number, page in enumerate(self.pages, 1):
+            item = RailItem(number, page.name)
+            item.clicked.connect(lambda _on=False, n=number - 1: self._rail_clicked(n))
+            self.rail.append(item)
+            steps.addWidget(item)
+        foot = label("Everything here can be changed later in System Settings.", "faint", wrap=True)
+        rail = QWidget()
+        rail.setFixedWidth(RAIL_WIDTH)
+        rail.setLayout(column(brand, 22, steps, None, row(foot, margins=(11, 0, 8, 0)), spacing=0,
+                              margins=(16, 24, 16, 22)))
+
+        # page side
+        self.heading = label("", "title")
+        self.subheading = label("", "subtitle", wrap=True)
+        self.stack = QStackedWidget()
+        for page in self.pages:
+            self.stack.addWidget(page)
+        self.back_button = button("Back", "arrow-left", "nav")
+        self.back_button.clicked.connect(self.back)
+        self.next_button = button("Continue", name="primary")
+        self.next_button.clicked.connect(self.next)
+        self.next_button.setMinimumWidth(128)
+        self.back_button.setFixedHeight(40)
+        self.next_button.setFixedHeight(40)
+        footer = row(None, self.back_button, self.next_button, spacing=10)
+        side = column(self.heading, self.subheading, 18, (self.stack, 1), 14, footer, spacing=5,
+                      margins=(34, 30, 30, 24))
+
+        self.setLayout(row(rail, (side, 1), spacing=0, margins=(MARGIN, MARGIN, MARGIN, MARGIN)))
+        self.go(0)
+
+    # painting
+
+    def paintEvent(self, _event):
+        ratio = self.devicePixelRatioF()
+        if self.canvas is None or self.canvas.size() != self.size() * ratio:
+            card = QRectF(self.rect()).adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+            self.canvas = self.backdrop.render(self.size(), ratio, card, RAIL_WIDTH)
+        painter = QPainter(self)
+        painter.drawPixmap(0, 0, self.canvas)
+        painter.end()
+
+    # navigation
+
+    def set_heading(self, title, subtitle):
+        self.heading.setText(title)
+        self.subheading.setText(subtitle)
+
+    def go(self, index):
+        index = max(0, min(len(self.pages) - 1, index))
+        current = self.stack.currentWidget()
+        page = self.pages[index]
+        if current is not page:
+            current.on_hide()
+            self.previous = current
+        self.visited = max(self.visited, index)
+        self.stack.setCurrentWidget(page)
+        self.set_heading(page.title, page.subtitle)
+        page.on_show()
+        self.refresh_nav()
+
+    def next(self):
+        page = self.stack.currentWidget()
+        if page.can_next() and page.on_next() is not False:
+            self.go(self.stack.currentIndex() + 1)
+
+    def back(self):
+        if self.stack.currentWidget().can_back():
+            self.go(self.stack.currentIndex() - 1)
+
+    def _reachable(self, index):
+        if self.install.running:
+            return False
+        if self.pages[index] is self.done_page:
+            return self.install.finished
+        return index <= self.visited
+
+    def _rail_clicked(self, index):
+        if self._reachable(index) and index != self.stack.currentIndex():
+            self.go(index)
+
+    def refresh_nav(self):
+        if not hasattr(self, "next_button"):
+            return  # a page reported a change while the window was still being built
+        index = self.stack.currentIndex()
+        page = self.pages[index]
+        for n, item in enumerate(self.rail):
+            state = "current" if n == index else "done" if n < index or (n <= self.visited and n != index) else "todo"
+            item.set_state(state, self._reachable(n))
+        self.next_button.setText(page.next_label)
+        self.next_button.setEnabled(page.can_next())
+        self.back_button.setVisible(index > 0)
+        self.back_button.setEnabled(page.can_back())
+
+    # data
+
+    def selection(self):
+        return self.apps.selected() | self.developer.selected()
+
+    def choices(self):
+        """Everything the user chose, as plain data for the install step."""
+        return {
+            "layouts": self.language.layouts(),
+            "switcher": self.language.switcher.value(),
+            "keyboard_changed": self.first_run or self.language.changed(),
+            "zone": self.region.zone,
+            "current_zone": self.region.current,
+            "hours24": self.region.hours24(),
+            "clock_changed": self.first_run or self.region.hours24() != self.region.initial_24,
+            "backup": self.backup.settings(),
+            "backup_changed": self.first_run or self.backup.changed(),
+            "selected": self.selection(),
+        }
+
+    def retry_failed(self):
+        self.go(self.pages.index(self.install))
+        self.install.start(retry=True)
+
+    def finish(self):
+        mark_done()
+        self.close()
+
+    # closing
+
+    def _ask_close(self):
+        box = QMessageBox(self)
+        box.setWindowTitle("Darkn OS Setup")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText("The installation is still running.")
+        box.setInformativeText("If you close this window, the remaining apps keep installing in the background "
+                               "and you get a notification when they are ready.")
+        close = box.addButton("Close and continue in background", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Keep open", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is close
+
+    def closeEvent(self, event):
+        install = self.install
+        logging_out = QApplication.instance().isSavingSession()
+        if install.running and not logging_out and not self.confirm_close():
+            event.ignore()
+            return
+        if install.running or install.fatal:  # unfinished: the service picks it up, now or once online
+            install.continue_in_background()
+        if install.started:
+            mark_done()  # the choices are applied; do not open again at the next login
+        for page in self.pages:
+            page.on_hide()
+        wait_for_workers(1500)
+        event.accept()
+
+
+def dark_palette():
+    palette = QPalette()
+    for role, color in ((QPalette.ColorRole.Window, "#151517"), (QPalette.ColorRole.WindowText, TEXT),
+                        (QPalette.ColorRole.Base, "#1b1b1e"), (QPalette.ColorRole.AlternateBase, "#202024"),
+                        (QPalette.ColorRole.Text, TEXT), (QPalette.ColorRole.Button, "#26262a"),
+                        (QPalette.ColorRole.ButtonText, TEXT), (QPalette.ColorRole.Highlight, "#4a4a52"),
+                        (QPalette.ColorRole.HighlightedText, "#ffffff"), (QPalette.ColorRole.ToolTipBase, "#1b1b1d"),
+                        (QPalette.ColorRole.ToolTipText, TEXT), (QPalette.ColorRole.PlaceholderText, FAINT)):
+        palette.setColor(role, QColor(color))
+    return palette
+
+
+def setup_app(app):
+    app.setApplicationName("Darkn OS Setup")
+    app.setDesktopFileName("darkn-welcome")
+    app.setStyle("Fusion")  # the same widgets under every desktop theme
+    app.setPalette(dark_palette())
+    font = QFont()
+    font.setFamilies(["Inter", "Noto Sans", "Segoe UI", "sans-serif"])
+    font.setPointSize(10)
+    app.setFont(font)
+    app.setStyleSheet(style_sheet())
+
+
+def main():
+    app = QApplication(sys.argv)
+    setup_app(app)
+    window = Wizard()
+    window.show()
+    status = app.exec()
+    if not wait_for_workers(3000):
+        os._exit(status)  # a probe is still stuck (a password prompt, a dead network): do not wait for it
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

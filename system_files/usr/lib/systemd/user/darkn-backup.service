@@ -1,0 +1,10 @@
+[Unit]
+Description=Darkn OS: back up the home folder
+ConditionUser=!@system
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/darkn-backup run
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=infinity

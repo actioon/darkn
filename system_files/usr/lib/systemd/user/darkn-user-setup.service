@@ -1,12 +1,12 @@
 [Unit]
-Description=Darkn OS developer tools setup for the current user
-Documentation=file:///usr/libexec/darkn-user-setup
+Description=Darkn OS: resume an interrupted app install
+Documentation=file:///usr/libexec/darkn-installer
 After=graphical-session.target ublue-user-setup.service
 ConditionUser=!@system
 
 [Service]
 Type=oneshot
-ExecStart=/usr/libexec/darkn-user-setup
+ExecStart=/usr/libexec/darkn-installer --resume
 # Downloads can take a long time; never kill the run on a start timeout.
 TimeoutStartSec=infinity
 Restart=on-failure

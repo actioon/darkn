@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "essentials",
+      "name": "Desktop essentials",
+      "description": "Everyday tools most people expect to find.",
+      "items": [
+        {"id": "haruna", "name": "Haruna", "description": "Video player", "kind": "flatpak", "ref": "org.kde.haruna", "default": true},
+        {"id": "photos", "name": "Photos", "description": "Image viewer and gallery", "kind": "flatpak", "ref": "org.kde.koko", "default": true},
+        {"id": "okular", "name": "Okular", "description": "PDF and document reader", "kind": "flatpak", "ref": "org.kde.okular", "default": true},
+        {"id": "qalculate", "name": "Qalculate!", "description": "Scientific and programmer calculator", "kind": "flatpak", "ref": "io.github.Qalculate.qalculate-qt", "default": true},
+        {"id": "missioncenter", "name": "Mission Center", "description": "Task manager", "kind": "flatpak", "ref": "io.missioncenter.MissionCenter", "default": true},
+        {"id": "flatseal", "name": "Flatseal", "description": "App permissions", "kind": "flatpak", "ref": "com.github.tchx84.Flatseal", "default": true},
+        {"id": "warehouse", "name": "Warehouse", "description": "Manage installed apps", "kind": "flatpak", "ref": "io.github.flattool.Warehouse", "default": true},
+        {"id": "bitwarden", "name": "Bitwarden", "description": "Password manager", "kind": "flatpak", "ref": "com.bitwarden.desktop", "default": true},
+        {"id": "easyeffects", "name": "EasyEffects", "description": "Equalizer and microphone noise removal", "kind": "flatpak", "ref": "com.github.wwmm.easyeffects", "default": true},
+        {"id": "waywallen", "name": "Waywallen", "description": "Live and interactive wallpapers", "kind": "flatpak", "ref": "org.waywallen.waywallen", "default": true},
+        {"id": "polychromatic", "name": "Polychromatic", "description": "Razer lighting, DPI and polling rate", "kind": "flatpak", "ref": "app.polychromatic.controller", "default": true},
+        {"id": "ktailctl", "name": "KTailctl", "description": "Tailscale control panel", "kind": "flatpak", "ref": "org.fkoehler.KTailctl", "default": true}
+      ]
+    },
+    {
+      "id": "browsers",
+      "name": "Browsers",
+      "description": "Brave is set as the default browser.",
+      "items": [
+        {"id": "brave", "name": "Brave", "description": "Default browser", "kind": "flatpak", "ref": "com.brave.Browser", "default": true},
+        {"id": "firefox", "name": "Firefox", "description": "Second browser", "kind": "flatpak", "ref": "org.mozilla.firefox", "default": true}
+      ]
+    },
+    {
+      "id": "chat",
+      "name": "Chat",
+      "description": "Messaging apps.",
+      "items": [
+        {"id": "telegram", "name": "Telegram", "description": "Messaging", "kind": "flatpak", "ref": "org.telegram.desktop", "default": true},
+        {"id": "discord", "name": "Discord", "description": "Voice and text chat", "kind": "flatpak", "ref": "com.discordapp.Discord", "default": true},
+        {"id": "whatsapp", "name": "WhatsApp (ZapZap)", "description": "WhatsApp client", "kind": "flatpak", "ref": "com.rtosta.zapzap", "default": true}
+      ]
+    },
+    {
+      "id": "office",
+      "name": "Notes and office",
+      "description": "ArtCraft apps are early alpha; OnlyOffice is the stable choice.",
+      "items": [
+        {"id": "obsidian", "name": "Obsidian", "description": "Notes and knowledge base", "kind": "flatpak", "ref": "md.obsidian.Obsidian", "default": true},
+        {"id": "onlyoffice", "name": "OnlyOffice", "description": "Documents, spreadsheets, slides", "kind": "flatpak", "ref": "org.onlyoffice.desktopeditors", "default": true},
+        {"id": "wordcraft", "name": "WordCraft", "description": "Word processor (alpha)", "kind": "flatpak", "ref": "ai.storyteller.wordcraft", "remote": "artcraft-oci", "default": true},
+        {"id": "gridcraft", "name": "GridCraft", "description": "Spreadsheets (alpha)", "kind": "flatpak", "ref": "ai.storyteller.gridcraft", "remote": "artcraft-oci", "default": true},
+        {"id": "deckcraft", "name": "DeckCraft", "description": "Presentations (alpha)", "kind": "flatpak", "ref": "ai.storyteller.deckcraft", "remote": "artcraft-oci", "default": true},
+        {"id": "pdfcraft", "name": "PdfCraft", "description": "PDF reader and editor (alpha)", "kind": "flatpak", "ref": "ai.storyteller.pdfcraft", "remote": "artcraft-oci", "default": true}
+      ]
+    },
+    {
+      "id": "design",
+      "name": "Design",
+      "description": "ArtCraft's creative apps (early alpha).",
+      "items": [
+        {"id": "photocraft", "name": "PhotoCraft", "description": "Photo editor, Photoshop-style (alpha)", "kind": "flatpak", "ref": "ai.storyteller.photocraft", "remote": "artcraft-oci", "default": true},
+        {"id": "vectorcraft", "name": "VectorCraft", "description": "Vector art, Illustrator-style (alpha)", "kind": "flatpak", "ref": "ai.storyteller.vectorcraft", "remote": "artcraft-oci", "default": true},
+        {"id": "artcraft-launcher", "name": "ArtCraft Launcher", "description": "Install the rest of the ArtCraft suite", "kind": "flatpak", "ref": "ai.storyteller.artcraft-launcher", "remote": "artcraft-oci", "default": true}
+      ]
+    },
+    {
+      "id": "media",
+      "name": "Media",
+      "description": "Playback, recording and editing.",
+      "items": [
+        {"id": "vlc", "name": "VLC", "description": "Media player", "kind": "flatpak", "ref": "org.videolan.VLC", "default": true},
+        {"id": "obs", "name": "OBS Studio", "description": "Screen recording and streaming", "kind": "flatpak", "ref": "com.obsproject.Studio", "default": true},
+        {"id": "kdenlive", "name": "Kdenlive", "description": "Video editor", "kind": "flatpak", "ref": "org.kde.kdenlive", "default": true},
+        {"id": "audacity", "name": "Audacity", "description": "Audio editor", "kind": "flatpak", "ref": "org.audacityteam.Audacity", "default": true},
+        {"id": "handbrake", "name": "HandBrake", "description": "Video converter", "kind": "flatpak", "ref": "fr.handbrake.ghb", "default": true}
+      ]
+    },
+    {
+      "id": "ai",
+      "name": "AI",
+      "description": "Assistants and coding agents, as apps and in the terminal.",
+      "items": [
+        {"id": "claude-desktop", "name": "Claude", "description": "Desktop app", "kind": "brew", "pkg": "ublue-os/experimental-tap/claude-desktop-linux", "cask": true, "tap": "ublue-os/experimental-tap", "default": true},
+        {"id": "chatgpt", "name": "ChatGPT", "description": "Desktop app", "kind": "brew", "pkg": "ublue-os/experimental-tap/chatgpt-linux", "cask": true, "tap": "ublue-os/experimental-tap", "default": true},
+        {"id": "t3code", "name": "T3 Code", "description": "Desktop app for coding agents", "kind": "script", "script": "t3code", "default": true},
+        {"id": "cursor", "name": "Cursor", "description": "AI code editor", "kind": "brew", "pkg": "ublue-os/experimental-tap/cursor-linux", "cask": true, "tap": "ublue-os/experimental-tap", "default": true},
+        {"id": "antigravity", "name": "Antigravity", "description": "Google's agent platform", "kind": "brew", "pkg": "ublue-os/tap/antigravity-linux", "cask": true, "tap": "ublue-os/tap", "default": true},
+        {"id": "antigravity-ide", "name": "Antigravity IDE", "description": "Google's AI editor", "kind": "brew", "pkg": "ublue-os/tap/antigravity-ide-linux", "cask": true, "tap": "ublue-os/tap", "default": true},
+        {"id": "opencode-desktop", "name": "OpenCode", "description": "Desktop app", "kind": "brew", "pkg": "ublue-os/experimental-tap/opencode-desktop-linux", "cask": true, "tap": "ublue-os/experimental-tap", "default": true},
+        {"id": "claude-code", "name": "Claude Code", "description": "Terminal agent (claude)", "kind": "brew", "pkg": "claude-code", "cask": true, "default": true},
+        {"id": "codex", "name": "Codex", "description": "Terminal agent from OpenAI (codex)", "kind": "brew", "pkg": "codex", "cask": true, "default": true},
+        {"id": "gemini-cli", "name": "Gemini CLI", "description": "Terminal agent from Google (gemini)", "kind": "brew", "pkg": "gemini-cli", "default": true},
+        {"id": "copilot-cli", "name": "Copilot CLI", "description": "GitHub Copilot in the terminal", "kind": "brew", "pkg": "copilot-cli", "cask": true, "default": true},
+        {"id": "opencode", "name": "OpenCode CLI", "description": "Terminal agent (opencode)", "kind": "brew", "pkg": "opencode", "default": true},
+        {"id": "qwen-code", "name": "Qwen Code", "description": "Terminal agent (qwen)", "kind": "npm", "pkg": "@qwen-code/qwen-code", "default": true}
+      ]
+    },
+    {
+      "id": "development",
+      "name": "Development",
+      "description": "Node.js, Python, Java, .NET, C/C++, Docker, VS Code and git are already part of the system.",
+      "items": [
+        {"id": "android-studio", "name": "Android Studio", "description": "Android IDE and emulator", "kind": "flatpak", "ref": "com.google.AndroidStudio", "default": true},
+        {"id": "flutter", "name": "Flutter", "description": "Flutter and Dart SDK (stable)", "kind": "script", "script": "flutter", "default": true},
+        {"id": "rust", "name": "Rust", "description": "rustup with the stable toolchain", "kind": "script", "script": "rust", "default": true},
+        {"id": "bruno", "name": "Bruno", "description": "API client", "kind": "flatpak", "ref": "com.usebruno.Bruno", "default": true},
+        {"id": "dbeaver", "name": "DBeaver", "description": "Database manager", "kind": "flatpak", "ref": "io.dbeaver.DBeaverCommunity", "default": true},
+        {"id": "poedit", "name": "Poedit", "description": "Translation editor", "kind": "flatpak", "ref": "net.poedit.Poedit", "default": true},
+        {"id": "starship", "name": "Starship prompt", "description": "Terminal prompt with git status", "kind": "brew", "pkg": "starship", "default": true},
+        {"id": "scrcpy", "name": "scrcpy", "description": "Mirror and control an Android phone", "kind": "brew", "pkg": "scrcpy", "default": true},
+        {"id": "eas-cli", "name": "EAS CLI", "description": "Expo build and submit", "kind": "npm", "pkg": "eas-cli", "default": true},
+        {"id": "supabase", "name": "Supabase CLI", "description": "Supabase command line", "kind": "brew", "pkg": "supabase/tap/supabase", "tap": "supabase/tap", "default": true},
+        {"id": "sqlcmd", "name": "sqlcmd", "description": "SQL Server command line", "kind": "brew", "pkg": "sqlcmd", "default": true},
+        {"id": "cloudflared", "name": "cloudflared", "description": "Cloudflare tunnels", "kind": "brew", "pkg": "cloudflared", "default": true}
+      ]
+    },
+    {
+      "id": "vscode",
+      "name": "VS Code extensions",
+      "description": "Installed into Visual Studio Code for your account.",
+      "items": [
+        {"id": "vsc-ai", "name": "AI assistants", "description": "Claude Code, ChatGPT/Codex, Gemini, OpenCode", "kind": "vscode", "default": true,
+         "extensions": ["anthropic.claude-code", "yechielby.claude-code-rtl", "openai.chatgpt", "openai.codex-audio", "google.geminicodeassist", "google.gemini-cli-vscode-ide-companion", "sst-dev.opencode"]},
+        {"id": "vsc-mobile", "name": "Flutter and React Native", "description": "Dart, Flutter, snippets, React Native tools", "kind": "vscode", "default": true,
+         "extensions": ["dart-code.dart-code", "dart-code.flutter", "alexisvt.flutter-snippets", "nash.awesome-flutter-snippets", "gornivv.vscode-flutter-files", "rodrigorahman.flutter-dart-utils", "msjsdiag.vscode-react-native"]},
+        {"id": "vsc-python", "name": "Python and Jupyter", "description": "Python, Pylance, debugger, notebooks", "kind": "vscode", "default": true,
+         "extensions": ["ms-python.python", "ms-python.vscode-pylance", "ms-python.debugpy", "ms-python.vscode-python-envs", "ms-toolsai.jupyter", "ms-toolsai.jupyter-keymap", "ms-toolsai.jupyter-renderers", "ms-toolsai.vscode-jupyter-cell-tags", "ms-toolsai.vscode-jupyter-slideshow"]},
+        {"id": "vsc-cpp", "name": "C, C++ and Java", "description": "C/C++ tools, CMake, Gradle", "kind": "vscode", "default": true,
+         "extensions": ["ms-vscode.cpptools", "ms-vscode.cpptools-extension-pack", "ms-vscode.cpptools-themes", "ms-vscode.cpp-devtools", "ms-vscode.cmake-tools", "vscjava.vscode-gradle"]},
+        {"id": "vsc-tools", "name": "Containers and utilities", "description": "Docker, Dev Containers, Live Share, Live Server and more", "kind": "vscode", "default": true,
+         "extensions": ["ms-azuretools.vscode-containers", "ms-vscode-remote.remote-containers", "github.codespaces", "ms-vsliveshare.vsliveshare", "formulahendry.code-runner", "ritwickdey.liveserver", "mechatroner.rainbow-csv", "pomdtr.excalidraw-editor", "khalid-alzahrani.ar-terminal"]}
+      ]
+    }
+  ]
+}
