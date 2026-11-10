@@ -134,11 +134,11 @@ HANDY_SHA256="2c77658d4939fbaeb82e168830d549b758d954e23e387a50017112dbc2735992"
 curl -fL --retry 3 -o /tmp/handy.rpm \
     "https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy-${HANDY_VERSION}-1.x86_64.rpm"
 echo "${HANDY_SHA256}  /tmp/handy.rpm" | sha256sum -c -
-# Handy's own package is unsigned (its integrity is the checksum above), but
-# its dependencies come from Fedora and must keep their signature checks,
-# so install them first, then Handy on its own.
-dnf5 install -y webkit2gtk4.1 openblas gtk-layer-shell
-dnf5 install -y --nogpgcheck /tmp/handy.rpm 2>&1 | tee /tmp/handy-install.log
+# Handy's own package is unsigned (its integrity is the checksum above).
+# dnf accepts an unsigned local file by default while still verifying every
+# dependency it pulls from Fedora, so do NOT pass --nogpgcheck here: that
+# switches the check off for the dependencies as well.
+dnf5 install -y /tmp/handy.rpm 2>&1 | tee /tmp/handy-install.log
 if grep -E 'skipped OpenPGP checks.*(fedora|updates)' /tmp/handy-install.log; then
     echo "Handy pulled unverified packages from Fedora repositories" >&2
     exit 1
