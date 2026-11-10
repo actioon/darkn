@@ -40,6 +40,11 @@ IsRuntime=false
 Branch=stable
 IsRuntime=false
 
+# Live and interactive wallpapers (its Plasma plugin is installed by build.sh)
+[Flatpak Preinstall org.waywallen.waywallen]
+Branch=stable
+IsRuntime=false
+
 # --- Browsers (Brave is the default, see /etc/xdg/mimeapps.list) ---
 [Flatpak Preinstall com.brave.Browser]
 Branch=stable

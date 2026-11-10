@@ -39,7 +39,22 @@ dnf5 install -y \
     unzip \
     zip \
     xz \
-    fuse-libs
+    fuse-libs \
+    plasma-smart-video-wallpaper-reborn
+
+### Live wallpapers
+# Video wallpapers come from Fedora's plasma-smart-video-wallpaper-reborn
+# (installed above). Interactive ones are handled by waywallen: the app is a
+# Flatpak (see darkn.preinstall) and this is its Plasma wallpaper plugin,
+# pinned to an exact release and checksum.
+WAYWALLEN_KDE_VERSION="0.4.6"
+WAYWALLEN_KDE_SHA256="f98647b301d16c00f711adc7dcbf8ca6d23f237fad1835f13916079ad9c032ce"
+curl -fL --retry 3 -o /tmp/waywallen-kde.zip \
+    "https://github.com/waywallen/waywallen-display/releases/download/v${WAYWALLEN_KDE_VERSION}/waywallen-kde-${WAYWALLEN_KDE_VERSION}-x86_64.zip"
+echo "${WAYWALLEN_KDE_SHA256}  /tmp/waywallen-kde.zip" | sha256sum -c -
+unzip -q /tmp/waywallen-kde.zip -d /usr/share/plasma/wallpapers/
+test -f /usr/share/plasma/wallpapers/org.waywallen.kde/metadata.json
+chmod -R u=rwX,go=rX /usr/share/plasma/wallpapers/org.waywallen.kde
 
 # Fedora ships versioned Node.js binaries (node-24). Make sure the plain
 # `node`, `npm` and `npx` commands exist.
