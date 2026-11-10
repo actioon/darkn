@@ -1,0 +1,5 @@
+# Darkn OS default global shortcuts. Users can change them in
+# System Settings > Keyboard > Shortcuts.
+
+[services][darkn-dictation.desktop]
+_launch=Meta+H

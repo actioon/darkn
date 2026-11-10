@@ -40,7 +40,24 @@ dnf5 install -y \
     zip \
     xz \
     fuse-libs \
-    plasma-smart-video-wallpaper-reborn
+    plasma-smart-video-wallpaper-reborn \
+    wl-clipboard \
+    dotool \
+    gtk-layer-shell
+
+### Voice typing (speech to text)
+# Handy: offline dictation into any app, with the Cohere Transcribe Arabic
+# model for Arabic and mixed Arabic/English speech. Pinned to an exact
+# release and checksum; bump both to update.
+# It pastes through the clipboard (wl-clipboard) and sends Ctrl+V with dotool.
+HANDY_VERSION="0.10.0"
+HANDY_SHA256="2c77658d4939fbaeb82e168830d549b758d954e23e387a50017112dbc2735992"
+curl -fL --retry 3 -o /tmp/handy.rpm \
+    "https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy-${HANDY_VERSION}-1.x86_64.rpm"
+echo "${HANDY_SHA256}  /tmp/handy.rpm" | sha256sum -c -
+dnf5 install -y --nogpgcheck /tmp/handy.rpm
+command -v handy
+command -v kate
 
 ### Live wallpapers
 # Video wallpapers come from Fedora's plasma-smart-video-wallpaper-reborn

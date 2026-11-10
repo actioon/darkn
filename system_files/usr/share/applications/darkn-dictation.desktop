@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Toggle Voice Typing
+Name[ar]=تشغيل/إيقاف الكتابة بالصوت
+Comment=Start or stop dictation with Handy
+Exec=handy --toggle-transcription
+Icon=audio-input-microphone
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+Categories=Utility;

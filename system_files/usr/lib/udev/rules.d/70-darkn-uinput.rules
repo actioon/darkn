@@ -1,0 +1,7 @@
+# Darkn OS: let the user at the local seat create virtual input devices.
+# Voice typing (Handy + dotool) needs this to send Ctrl+V after it puts the
+# transcribed text on the clipboard. This grants access to /dev/uinput only,
+# so it allows sending keystrokes but not reading the real keyboard, which is
+# what membership of the "input" group would also allow.
+# Must sort before 73-seat-late.rules for the uaccess tag to apply.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

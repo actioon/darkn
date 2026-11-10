@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Handy
+Comment=Keep voice typing ready in the background
+Exec=handy --start-hidden
+Icon=handy
+Terminal=false
+X-KDE-autostart-phase=2

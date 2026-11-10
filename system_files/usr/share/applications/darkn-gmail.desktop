@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gmail
+Comment=Gmail in its own window (official web app, opened with Brave)
+Exec=flatpak run com.brave.Browser --app=https://mail.google.com/
+Icon=internet-mail
+Terminal=false
+StartupNotify=true
+StartupWMClass=brave-mail.google.com__-Default
+Categories=Network;Email;
+Keywords=mail;email;gmail;
