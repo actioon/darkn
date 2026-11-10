@@ -313,11 +313,13 @@ systemctl list-unit-files 'plasma-setup*' || true
 # KDE's Welcome Center (with Aurora's pages) also opens at first login, on
 # top of Darkn's wizard. Stop it from starting by itself; it stays in the
 # app menu.
-for entry in /etc/xdg/autostart/*plasma-welcome*.desktop /usr/share/autostart/*plasma-welcome*.desktop; do
-    [ -f "$entry" ] || continue
-    grep -q '^Hidden=' "$entry" && sed -i 's/^Hidden=.*/Hidden=true/' "$entry" || echo 'Hidden=true' >>"$entry"
-done
-ls /etc/xdg/autostart/ | grep -i welcome || true
+# It is not an autostart entry: a background (kded) module opens it when it
+# has never been shown, and again after each Plasma update. Turn the module
+# off and mark the current version as already seen.
+kset kded6rc --group Module-kded_plasma_welcome --key autoload false
+kset plasma-welcomerc --group General --key ShowUpdatePage false
+kset plasma-welcomerc --group General --key LastSeenVersion "$(rpm -q --queryformat '%{VERSION}' plasma-workspace)"
+grep -A1 'Module-kded_plasma_welcome' "${KDE_PROFILE}/kded6rc"
 
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same

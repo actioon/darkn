@@ -692,8 +692,8 @@ def card_size(width, height):
     stays a centred panel, so pages keep comfortable line lengths; it grows
     a little with the screen but never stretches from edge to edge.
     """
-    widest = max(1560, min(1720, int(width * 0.64)))
-    tallest = max(900, min(1040, int(height * 0.70)))
+    widest = max(1400, min(1560, int(width * 0.58)))
+    tallest = max(800, min(900, int(height * 0.62)))
     return min(width - 2 * MARGIN, widest), min(height - 2 * MARGIN, tallest)
 
 ICONS = {
@@ -796,7 +796,7 @@ def style_sheet():
     QLabel#heading {{ font-size: 14px; font-weight: 600; }}
     QLabel#big {{ font-size: 19px; font-weight: 600; }}
     QLabel#clock {{ font-size: 44px; font-weight: 500; }}
-    QLabel#stat {{ font-size: 30px; font-weight: 600; }}
+    QLabel#stat {{ font-size: 24px; font-weight: 600; }}
     QLabel#muted {{ color: {MUTED}; }}
     QLabel#small {{ color: {MUTED}; font-size: 12px; }}
     QLabel#faint {{ color: {FAINT}; font-size: 12px; }}
@@ -816,6 +816,7 @@ def style_sheet():
     QFrame#well {{ background: rgba(0, 0, 0, 46); border: 1px solid {white(16)}; border-radius: 10px; }}
     QFrame#iconTile {{ background: {white(18)}; border: 1px solid {white(24)}; border-radius: 10px; }}
     QFrame#divider {{ background: {white(18)}; max-height: 1px; border: none; }}
+    QFrame#group {{ background: rgba(0, 0, 0, 38); border: 1px solid {white(21)}; border-radius: 16px; }}
     QFrame#cell {{ background: {white(10)}; border: 1px solid {white(17)}; border-radius: 9px; }}
     QFrame#segmented {{ background: rgba(0, 0, 0, 40); border: 1px solid {white(20)}; border-radius: 11px; }}
 
@@ -1496,41 +1497,34 @@ class WelcomePage(Page):
     def __init__(self, wizard):
         super().__init__(wizard)
         features = [
-            ("keyboard", "Language and keyboard", "Pick the layouts you type in and how to switch between them."),
-            ("clock", "Region and time", "Set the time zone, found automatically if you like."),
-            ("grid", "Apps and developer tools", "Choose exactly what gets installed. Everything is optional."),
-            ("shield", "Backups", "Decide whether, where and how much to back up."),
+            ("keyboard", "Language and keyboard", "Pick the layouts you type in and how to switch between them.", "Step 2"),
+            ("clock", "Region and time", "Set the time zone, found automatically if you like.", "Step 3"),
+            ("grid", "Apps and developer tools", "Choose exactly what gets installed. Everything is optional.",
+             "Steps 5 and 6"),
+            ("shield", "Backups", "Decide whether, where and how much to back up.", "Step 7"),
         ]
-        grid = QGridLayout()
-        grid.setSpacing(12)
         self.cards = []
-        for n, (icon_name, head, text) in enumerate(features):
-            box = column(row(icon_tile(icon_name, 42), None), None, 8, label(head, "heading"),
-                         label(text, "muted", wrap=True), spacing=3, margins=(20, 20, 20, 18))
-            self.cards.append(tile(box))
-            grid.addWidget(self.cards[-1], n // 2, n % 2)
-            grid.setColumnStretch(n % 2, 1)
+        rows = column(spacing=8)
+        for icon_name, head, text, step in features:
+            words = column(label(head, "rowTitle"), label(text, "small", wrap=True), spacing=1)
+            self.cards.append(tile(row(icon_tile(icon_name), (words, 1), label(step, "faint"), spacing=13,
+                                       margins=(14, 12, 18, 12))))
+            rows.addWidget(self.cards[-1])
 
         self.net_icon = QLabel()
         self.net_icon.setFixedSize(18, 18)
         self.net_title = label("Checking the internet connection", "rowTitle")
         self.net_text = label("Apps are downloaded in the last step.", "small", wrap=True)
         self.network = tile(row(self.net_icon, (column(self.net_title, self.net_text, spacing=1), 1),
-                                spacing=13, margins=(20, 12, 16, 12)))
-        self.setLayout(column((scrolled(column(grid, 2, self.network, None, spacing=12)), 1)))
+                                spacing=23, margins=(24, 12, 18, 12)))
+        self.setLayout(column((scrolled(column(section("What you will set up"), rows, 10,
+                                               section("Internet connection"), self.network, None, spacing=9)), 1)))
 
         self.timer = QTimer(self)
         self.timer.setInterval(6000)
         self.timer.timeout.connect(self.check)
         self.checking = False
         self._set_network(None)
-
-    def resizeEvent(self, event):
-        # The cards grow with the page, within reason, so a big screen is not left half empty.
-        spare = event.size().height() - self.network.sizeHint().height() - 52
-        for card in self.cards:
-            card.setFixedHeight(max(128, min(250, spare // 2)))
-        super().resizeEvent(event)
 
     def on_show(self):
         self.check()
@@ -1745,8 +1739,8 @@ class HardwarePage(Page):
                                           ("gpu", "monitor", "Graphics")):
             value = label("…", "rowTitle", wrap=True)
             self.values[key] = value
-            specs.addWidget(tile(column(row(icon_tile(icon_name, 34), label(head_text, "muted"), None, spacing=10), 4,
-                                        value, None, spacing=4, margins=(16, 14, 16, 14))), 1)
+            words = column(label(head_text, "small"), value, spacing=1)
+            specs.addWidget(tile(row(icon_tile(icon_name), (words, 1), spacing=13, margins=(14, 12, 14, 12))), 1)
 
         again = button("Check again", "refresh", "link", MUTED)
         again.clicked.connect(self.detect)
@@ -1809,7 +1803,7 @@ class CatalogPage(Page):
     def __init__(self, wizard, groups, selected, intro=None):
         super().__init__(wizard)
         self.tiles = {}
-        self.groups = []  # (group, header widget, grid, tiles, count label)
+        self.groups = []  # (group, header widget, grid, tiles, count label, panel)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search")
@@ -1825,10 +1819,9 @@ class CatalogPage(Page):
         self.empty = label("Nothing matches the search." if groups else "The app catalog could not be read.", "muted")
         self.empty.setVisible(not groups)
 
-        body = column(spacing=10, margins=(0, 0, 8, 0))
+        body = column(spacing=12, margins=(0, 0, 8, 0))
         if intro is not None:
             body.addWidget(intro)
-            body.addSpacing(4)
         for group in groups:
             tiles = []
             for item in group["items"]:
@@ -1846,12 +1839,12 @@ class CatalogPage(Page):
                            Elided(group.get("description", ""), "small"), spacing=2)
             header = QWidget()
             header.setLayout(row(icon_tile(CATEGORY_ICONS.get(group["id"], "box"), 36), 6, (words, 1), 10,
-                                 all_on, all_off, spacing=6, margins=(0, 8, 0, 0)))
+                                 all_on, all_off, spacing=6))
             grid = TileGrid(310, (2, 3))
             grid.set_items(tiles)
-            body.addWidget(header)
-            body.addWidget(grid)
-            self.groups.append((group, header, grid, tiles, count))
+            panel = tile(column(header, grid, spacing=12, margins=(14, 13, 14, 14)), "group")
+            body.addWidget(panel)
+            self.groups.append((group, header, grid, tiles, count, panel))
         body.addWidget(self.empty)
         body.addStretch(1)
 
@@ -1868,7 +1861,7 @@ class CatalogPage(Page):
                 app.setChecked(on)
 
     def _changed(self, *_):
-        for _group, _header, _grid, tiles, count in self.groups:
+        for _group, _header, _grid, tiles, count, _panel in self.groups:
             count.setText(f"{sum(app.isChecked() for app in tiles)} of {len(tiles)}")
         self.count.setText(f"{len(self.selected())} of {len(self.tiles)} selected")
         self.wizard.refresh_nav()
@@ -1876,11 +1869,11 @@ class CatalogPage(Page):
     def _filter(self, text):
         words = text.lower().split()
         anything = False
-        for _group, header, grid, tiles, _count in self.groups:
+        for _group, header, grid, tiles, _count, panel in self.groups:
             shown = [app for app in tiles if all(word in app.words for word in words)]
             grid.set_items(shown)
-            grid.setVisible(bool(shown))
-            header.setVisible(bool(shown))
+            for part in (header, grid, panel):
+                part.setVisible(bool(shown))
             anything = anything or bool(shown)
         self.empty.setVisible(not anything)
         self._changed()
@@ -1922,7 +1915,7 @@ class DeveloperPage(CatalogPage):
         box.setContentsMargins(14, 14, 14, 14)
         box.setSpacing(18)
         fill(box, [about, (tools, 1)])
-        super().__init__(wizard, groups, selected, tile(box))
+        super().__init__(wizard, groups, selected, tile(box, "group"))
         self.about, self.intro_box = about, box
         self._arrange_intro(self.width())
 
@@ -2517,7 +2510,7 @@ class DonePage(Page):
                                     (len(failed), "failed", BAD if failed else MUTED)):
             value = label(str(number), "stat")
             value.setStyleSheet(f"color: {color};")
-            stats.addWidget(tile(column(value, label(text, "muted"), spacing=0, margins=(18, 12, 18, 14))), 1)
+            stats.addWidget(tile(row(value, label(text, "muted"), None, spacing=10, margins=(18, 9, 18, 10))), 1)
         self.body.addLayout(stats)
 
         if failed:
