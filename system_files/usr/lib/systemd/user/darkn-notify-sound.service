@@ -1,0 +1,12 @@
+[Unit]
+Description=Darkn OS: per-app notification sounds
+After=graphical-session.target
+ConditionUser=!@system
+
+[Service]
+ExecStart=/usr/libexec/darkn-notify-soundd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

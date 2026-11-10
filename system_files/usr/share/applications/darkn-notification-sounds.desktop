@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Notification Sounds
+Name[ar]=أصوات الإشعارات
+Comment=Give each app or group of apps its own notification sound
+Comment[ar]=صوت إشعار مميز لكل برنامج أو مجموعة برامج
+Exec=/usr/bin/darkn-notification-sounds
+Icon=preferences-desktop-notification-bell
+Terminal=false
+Categories=Settings;Qt;
+Keywords=notification;sound;alert;ringtone;

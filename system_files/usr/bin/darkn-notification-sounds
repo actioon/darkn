@@ -1,0 +1,503 @@
+#!/usr/bin/python3
+"""Darkn OS: Notification Sounds.
+
+Give an app, or a group of apps, its own notification sound. The rules are
+saved to ~/.config/darkn/notification-sounds.json and picked up at once by
+the darkn-notify-sound service.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import (
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSlider, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
+)
+
+HOME = Path.home()
+CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "darkn" / "notification-sounds.json"
+STATE_FILE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "darkn" / "notification-apps.json"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share")
+
+APP_DIRS = [
+    Path("/usr/share/applications"),
+    Path("/var/lib/flatpak/exports/share/applications"),
+    DATA_HOME / "flatpak" / "exports" / "share" / "applications",
+    DATA_HOME / "applications",
+]
+SOUND_DIRS = [Path("/usr/share/sounds"), DATA_HOME / "sounds", DATA_HOME / "darkn" / "sounds"]
+SOUND_SUFFIXES = {".oga", ".ogg", ".wav", ".flac", ".mp3"}
+
+DEFAULT_CONFIG = {"enabled": True, "play_during_dnd": True, "default": None, "rules": []}
+
+
+# --- data ------------------------------------------------------------------
+
+def load_config():
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {**DEFAULT_CONFIG, **data}
+    except (OSError, ValueError):
+        pass
+    return json.loads(json.dumps(DEFAULT_CONFIG))
+
+
+def save_config(config):
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(CONFIG_FILE)
+
+
+def read_desktop_entry(path):
+    """Name and visibility of a .desktop file, or None if it is not an app."""
+    name, hidden, kind, in_main = "", False, "Application", False
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                if in_main:
+                    break
+                in_main = line == "[Desktop Entry]"
+            elif in_main and "=" in line:
+                key, value = line.split("=", 1)
+                if key == "Name":
+                    name = value
+                elif key in ("NoDisplay", "Hidden") and value.lower() == "true":
+                    hidden = True
+                elif key == "Type":
+                    kind = value
+    except OSError:
+        return None
+    if kind != "Application" or hidden or not name:
+        return None
+    return name
+
+
+def list_apps():
+    """Apps to offer: those that have sent notifications first, then installed ones."""
+    apps = {}
+    try:
+        seen = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        for entry in seen.values():
+            app_id = str(entry.get("id", ""))
+            if app_id:
+                apps[app_id.lower()] = {"id": app_id, "name": str(entry.get("name") or app_id), "seen": True}
+    except (OSError, ValueError, AttributeError):
+        pass
+    for folder in APP_DIRS:
+        if not folder.is_dir():
+            continue
+        for path in folder.glob("*.desktop"):
+            name = read_desktop_entry(path)
+            if not name:
+                continue
+            key = path.stem.lower()
+            if key in apps:
+                apps[key]["name"] = name
+            elif not any(a["name"].lower() == name.lower() for a in apps.values()):
+                apps[key] = {"id": path.stem, "name": name, "seen": False}
+    return sorted(apps.values(), key=lambda a: (not a["seen"], a["name"].lower()))
+
+
+def list_sounds():
+    sounds = []
+    for folder in SOUND_DIRS:
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            if path.suffix.lower() in SOUND_SUFFIXES and path.is_file():
+                relative = path.relative_to(folder)
+                theme = relative.parts[0] if len(relative.parts) > 1 else "My sounds"
+                sounds.append((f"{theme}: {path.stem}", str(path)))
+    return sorted(set(sounds), key=lambda s: s[0].lower())
+
+
+def play_sound(path, volume):
+    if not path or not Path(path).is_file():
+        return
+    if shutil.which("pw-play"):
+        cmd = ["pw-play", "--volume", f"{volume:.2f}", path]
+    elif shutil.which("paplay"):
+        cmd = ["paplay", f"--volume={int(volume * 65536)}", path]
+    else:
+        return
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+# --- widgets ---------------------------------------------------------------
+
+class SoundPicker(QWidget):
+    """Sound drop-down with Browse, a volume slider and a Play button."""
+
+    def __init__(self, sounds, on_change=None, parent=None):
+        super().__init__(parent)
+        self._on_change = on_change
+        self.combo = QComboBox()
+        self.combo.setMinimumWidth(220)
+        self.combo.addItem("No sound", "")
+        for label, path in sounds:
+            self.combo.addItem(label, path)
+
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        play = QPushButton(QIcon.fromTheme("media-playback-start"), "Play")
+        play.clicked.connect(lambda: play_sound(self.sound(), self.volume()))
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(10, 150)
+        self.slider.setValue(100)
+        self.slider.setFixedWidth(120)
+        self.percent = QLabel("100%")
+        self.percent.setFixedWidth(44)
+        self.slider.valueChanged.connect(lambda v: self.percent.setText(f"{v}%"))
+
+        # Two rows, so the picker also fits in a narrow dialog.
+        top = QHBoxLayout()
+        top.addWidget(self.combo, 1)
+        top.addWidget(browse)
+        bottom = QHBoxLayout()
+        bottom.addWidget(QLabel("Volume"))
+        bottom.addWidget(self.slider)
+        bottom.addWidget(self.percent)
+        bottom.addWidget(play)
+        bottom.addStretch(1)
+        rows = QVBoxLayout(self)
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.addLayout(top)
+        rows.addLayout(bottom)
+
+        self.combo.currentIndexChanged.connect(self._changed)
+        self.slider.sliderReleased.connect(self._changed)
+
+    def _changed(self, *_):
+        if self._on_change:
+            self._on_change()
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a sound", str(HOME), "Sounds (*.oga *.ogg *.wav *.flac *.mp3)")
+        if path:
+            self.set_sound(path)
+
+    def sound(self):
+        return self.combo.currentData() or ""
+
+    def volume(self):
+        return self.slider.value() / 100
+
+    def set_sound(self, path):
+        index = self.combo.findData(path) if path else 0
+        if index < 0:
+            self.combo.addItem(f"File: {Path(path).name}", path)
+            index = self.combo.count() - 1
+        self.combo.setCurrentIndex(index)
+
+    def set_volume(self, volume):
+        self.slider.setValue(int(round(float(volume or 1.0) * 100)))
+
+
+class RuleDialog(QDialog):
+    def __init__(self, apps, sounds, rule=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Notification sound rule")
+        self.setMinimumSize(640, 560)
+        rule = rule or {}
+        chosen = {str(a.get("id", "")).lower(): a for a in rule.get("apps", [])}
+
+        self.name = QLineEdit(rule.get("name", ""))
+        self.name.setPlaceholderText("For example: Chat apps")
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search apps…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+
+        self.apps = QListWidget()
+        known = set()
+        for app in apps:
+            known.add(app["id"].lower())
+            self._add_app(app, app["id"].lower() in chosen)
+        for key, app in chosen.items():  # apps typed in by hand earlier
+            if key not in known:
+                self._add_app({"id": app.get("id", ""), "name": app.get("name") or app.get("id", ""), "seen": False}, True)
+
+        self.manual = QLineEdit()
+        self.manual.setPlaceholderText("App not in the list? Type its name")
+        add_manual = QPushButton("Add")
+        add_manual.clicked.connect(self._add_manual)
+        self.manual.returnPressed.connect(self._add_manual)
+        manual_row = QHBoxLayout()
+        manual_row.addWidget(self.manual, 1)
+        manual_row.addWidget(add_manual)
+
+        self.picker = SoundPicker(sounds)
+        self.picker.set_sound(rule.get("sound", ""))
+        self.picker.set_volume(rule.get("volume", 1.0))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+
+        form = QFormLayout()
+        form.addRow("Rule name", self.name)
+        form.addRow("Sound", self.picker)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(QLabel("Apps that use this sound (● = has sent notifications before):"))
+        layout.addWidget(self.search)
+        layout.addWidget(self.apps, 1)
+        layout.addLayout(manual_row)
+        layout.addWidget(buttons)
+
+    def _add_app(self, app, checked):
+        label = f"● {app['name']}" if app.get("seen") else app["name"]
+        item = QListWidgetItem(label)
+        item.setData(Qt.ItemDataRole.UserRole, {"id": app["id"], "name": app["name"]})
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        item.setToolTip(app["id"])
+        self.apps.addItem(item)
+        return item
+
+    def _add_manual(self):
+        text = self.manual.text().strip()
+        if not text:
+            return
+        item = self._add_app({"id": text, "name": text, "seen": False}, True)
+        self.apps.scrollToItem(item)
+        self.manual.clear()
+
+    def _filter(self, text):
+        text = text.lower()
+        for row in range(self.apps.count()):
+            item = self.apps.item(row)
+            item.setHidden(text not in item.text().lower())
+
+    def selected_apps(self):
+        return [self.apps.item(r).data(Qt.ItemDataRole.UserRole)
+                for r in range(self.apps.count())
+                if self.apps.item(r).checkState() == Qt.CheckState.Checked]
+
+    def _accept(self):
+        if not self.selected_apps():
+            QMessageBox.information(self, "Choose apps", "Tick at least one app for this rule.")
+            return
+        if not self.picker.sound():
+            QMessageBox.information(self, "Choose a sound", "Pick the sound this rule should play.")
+            return
+        self.accept()
+
+    def rule(self, enabled=True):
+        apps = self.selected_apps()
+        name = self.name.text().strip() or ", ".join(a["name"] for a in apps[:3])
+        return {"name": name, "enabled": enabled, "apps": apps,
+                "sound": self.picker.sound(), "volume": self.picker.volume()}
+
+
+class MainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Notification Sounds")
+        self.setWindowIcon(QIcon.fromTheme("preferences-desktop-notification-bell"))
+        self.resize(860, 620)
+        self.config = load_config()
+        self.sounds = list_sounds()
+        self._loading = True
+
+        intro = QLabel("Give an app, or a group of apps, its own notification sound. "
+                       "Rules are checked from top to bottom; the first match wins.")
+        intro.setWordWrap(True)
+
+        self.enabled = QCheckBox("Use custom notification sounds")
+        self.dnd = QCheckBox("Keep playing sounds while Do Not Disturb is on")
+        self.enabled.toggled.connect(self._save_options)
+        self.dnd.toggled.connect(self._save_options)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Rule", "Apps", "Sound"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.itemChanged.connect(self._rule_toggled)
+        self.table.itemDoubleClicked.connect(lambda *_: self._edit())
+
+        buttons = QHBoxLayout()
+        for label, icon, slot in (
+            ("Add rule…", "list-add", self._add),
+            ("Edit…", "document-edit", self._edit),
+            ("Remove", "list-remove", self._remove),
+            ("Move up", "go-up", lambda: self._move(-1)),
+            ("Move down", "go-down", lambda: self._move(1)),
+            ("Play", "media-playback-start", self._play_selected),
+        ):
+            button = QPushButton(QIcon.fromTheme(icon), label)
+            button.clicked.connect(slot)
+            buttons.addWidget(button)
+        buttons.addStretch(1)
+
+        rules_box = QGroupBox("Rules")
+        rules_layout = QVBoxLayout(rules_box)
+        rules_layout.addWidget(self.table)
+        rules_layout.addLayout(buttons)
+
+        self.default_on = QCheckBox("Play this sound for every other app")
+        self.default_picker = SoundPicker(self.sounds, on_change=self._save_default)
+        self.default_on.toggled.connect(self._save_default)
+        default_box = QGroupBox("Everything else")
+        default_layout = QVBoxLayout(default_box)
+        default_layout.addWidget(self.default_on)
+        default_layout.addWidget(self.default_picker)
+
+        tip = QLabel("Tip: apps such as Telegram and Discord also play their own sound. "
+                     "Turn that off inside the app, or you will hear two sounds.")
+        tip.setWordWrap(True)
+        tip.setEnabled(False)
+
+        close = QPushButton("Close")
+        close.clicked.connect(self.close)
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        bottom.addWidget(close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addWidget(self.enabled)
+        layout.addWidget(self.dnd)
+        layout.addWidget(rules_box, 1)
+        layout.addWidget(default_box)
+        layout.addWidget(tip)
+        layout.addLayout(bottom)
+
+        self._load()
+
+    # loading and saving
+
+    def _load(self):
+        self._loading = True
+        self.enabled.setChecked(bool(self.config.get("enabled", True)))
+        self.dnd.setChecked(bool(self.config.get("play_during_dnd", True)))
+        default = self.config.get("default") or {}
+        self.default_on.setChecked(bool(default.get("enabled", False)) and bool(default.get("sound")))
+        self.default_picker.set_sound(default.get("sound", ""))
+        self.default_picker.set_volume(default.get("volume", 1.0))
+        self._fill_table()
+        self._loading = False
+
+    def _fill_table(self, select=None):
+        was_loading, self._loading = self._loading, True
+        self.table.setRowCount(0)
+        for rule in self.config["rules"]:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            name = QTableWidgetItem(rule.get("name", ""))
+            name.setFlags(name.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            name.setCheckState(Qt.CheckState.Checked if rule.get("enabled", True) else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, name)
+            self.table.setItem(row, 1, QTableWidgetItem(", ".join(a.get("name", "") for a in rule.get("apps", []))))
+            self.table.setItem(row, 2, QTableWidgetItem(Path(rule.get("sound", "")).stem))
+        if select is not None and 0 <= select < self.table.rowCount():
+            self.table.selectRow(select)
+        self._loading = was_loading
+
+    def _save(self):
+        if not self._loading:
+            save_config(self.config)
+
+    def _save_options(self, *_):
+        self.config["enabled"] = self.enabled.isChecked()
+        self.config["play_during_dnd"] = self.dnd.isChecked()
+        self._save()
+
+    def _save_default(self, *_):
+        self.config["default"] = {
+            "enabled": self.default_on.isChecked(),
+            "sound": self.default_picker.sound(),
+            "volume": self.default_picker.volume(),
+        }
+        self._save()
+
+    # rule actions
+
+    def _row(self):
+        rows = self.table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _rule_toggled(self, item):
+        if self._loading or item.column() != 0:
+            return
+        self.config["rules"][item.row()]["enabled"] = item.checkState() == Qt.CheckState.Checked
+        self._save()
+
+    def _add(self):
+        dialog = RuleDialog(list_apps(), self.sounds, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.config["rules"].append(dialog.rule())
+            self._save()
+            self._fill_table(select=len(self.config["rules"]) - 1)
+
+    def _edit(self):
+        row = self._row()
+        if row < 0:
+            return
+        current = self.config["rules"][row]
+        dialog = RuleDialog(list_apps(), self.sounds, rule=current, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.config["rules"][row] = dialog.rule(enabled=current.get("enabled", True))
+            self._save()
+            self._fill_table(select=row)
+
+    def _remove(self):
+        row = self._row()
+        if row < 0:
+            return
+        del self.config["rules"][row]
+        self._save()
+        self._fill_table(select=min(row, len(self.config["rules"]) - 1))
+
+    def _move(self, step):
+        row = self._row()
+        target = row + step
+        rules = self.config["rules"]
+        if row < 0 or not 0 <= target < len(rules):
+            return
+        rules[row], rules[target] = rules[target], rules[row]
+        self._save()
+        self._fill_table(select=target)
+
+    def _play_selected(self):
+        row = self._row()
+        if row >= 0:
+            rule = self.config["rules"][row]
+            play_sound(rule.get("sound", ""), float(rule.get("volume", 1.0)))
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Notification Sounds")
+    app.setDesktopFileName("darkn-notification-sounds")
+    window = MainWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

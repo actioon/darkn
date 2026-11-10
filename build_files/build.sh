@@ -197,6 +197,19 @@ systemctl --global enable darkn-update-notify.timer
 # Windows data drives (NTFS) are mounted at boot.
 systemctl enable darkn-mount-ntfs.service
 
+### Per-app notification sounds
+# darkn-notify-soundd plays the sound a user assigned to an app or a group
+# of apps; darkn-notification-sounds is its settings window (PyQt6).
+# The sound themes give a good set of sounds to choose from.
+dnf5 install -y python3-pyqt6 pipewire-utils ocean-sound-theme oxygen-sounds sound-theme-freedesktop
+chmod 0755 /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
+systemctl --global enable darkn-notify-sound.service
+python3 -m py_compile /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
+find /usr/libexec /usr/bin -maxdepth 1 -name '__pycache__' -exec rm -rf {} +
+python3 -c "import PyQt6.QtWidgets"
+command -v pw-play
+command -v busctl
+
 ### Image signature policy
 # Only accept Darkn OS images that are signed with our cosign key, the same
 # way Aurora verifies its own images.

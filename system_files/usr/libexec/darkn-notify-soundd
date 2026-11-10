@@ -1,0 +1,189 @@
+#!/usr/bin/python3
+"""Darkn OS notification sound service.
+
+Watches desktop notifications on the session bus and plays the sound the
+user assigned to the sending app (or group of apps). Rules are edited with
+the "Notification Sounds" app and stored in
+~/.config/darkn/notification-sounds.json.
+
+It only listens: notifications are never changed, delayed or blocked.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "darkn" / "notification-sounds.json"
+STATE_FILE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "darkn" / "notification-apps.json"
+
+MATCH_RULE = "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"
+MIN_GAP_SECONDS = 0.8  # one burst of messages from an app gives one sound
+
+DEFAULT_CONFIG = {"enabled": True, "play_during_dnd": True, "default": None, "rules": []}
+
+
+class Config:
+    """The rules file, reloaded whenever it changes on disk."""
+
+    def __init__(self):
+        self._mtime = None
+        self.data = dict(DEFAULT_CONFIG)
+
+    def get(self):
+        try:
+            mtime = CONFIG_FILE.stat().st_mtime
+        except OSError:
+            self._mtime = None
+            self.data = dict(DEFAULT_CONFIG)
+            return self.data
+        if mtime != self._mtime:
+            try:
+                loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self.data = {**DEFAULT_CONFIG, **loaded}
+                    self._mtime = mtime
+            except (OSError, ValueError):
+                pass  # keep the last good rules while the file is being written
+        return self.data
+
+
+def app_matches(app, app_name, desktop_entry):
+    """True if a rule's app entry refers to the sender of a notification."""
+    app_id = str(app.get("id", "")).lower()
+    name = str(app.get("name", "")).lower()
+    sender = {s for s in (app_name.lower(), desktop_entry.lower()) if s}
+    if not sender:
+        return False
+    candidates = {c for c in (app_id, name, app_id.rsplit(".", 1)[-1]) if c}
+    return bool(sender & candidates)
+
+
+def find_sound(config, app_name, desktop_entry):
+    for rule in config.get("rules", []):
+        if not rule.get("enabled", True) or not rule.get("sound"):
+            continue
+        if any(app_matches(app, app_name, desktop_entry) for app in rule.get("apps", [])):
+            return rule
+    default = config.get("default")
+    if isinstance(default, dict) and default.get("enabled", True) and default.get("sound"):
+        return default
+    return None
+
+
+def do_not_disturb_active():
+    try:
+        out = subprocess.run(
+            ["busctl", "--user", "get-property", "org.freedesktop.Notifications",
+             "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Inhibited"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+        return out.strip().endswith("true")
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def play(sound, volume):
+    path = Path(str(sound)).expanduser()
+    if not path.is_file():
+        return
+    volume = max(0.0, min(float(volume or 1.0), 1.5))
+    if shutil.which("pw-play"):
+        cmd = ["pw-play", "--volume", f"{volume:.2f}", str(path)]
+    elif shutil.which("paplay"):
+        cmd = ["paplay", f"--volume={int(volume * 65536)}", str(path)]
+    else:
+        return
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+class SeenApps:
+    """Remembers which apps have sent notifications, for the settings app."""
+
+    def __init__(self):
+        try:
+            self.apps = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            if not isinstance(self.apps, dict):
+                self.apps = {}
+        except (OSError, ValueError):
+            self.apps = {}
+
+    def record(self, app_name, desktop_entry):
+        key = desktop_entry or app_name
+        if not key:
+            return
+        known = self.apps.get(key)
+        if known and known.get("name") == app_name:
+            return
+        self.apps[key] = {"id": key, "name": app_name or key}
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = STATE_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.apps, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(STATE_FILE)
+        except OSError:
+            pass
+
+
+def hint(hints, name):
+    """Read one entry of the a{sv} hints as busctl prints it."""
+    value = hints.get(name) if isinstance(hints, dict) else None
+    if isinstance(value, dict):
+        return value.get("data")
+    return value
+
+
+def main():
+    config = Config()
+    seen = SeenApps()
+    last_played = {}
+
+    monitor = subprocess.Popen(
+        ["busctl", "--user", "monitor", "--json=short", "--match", MATCH_RULE],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+    )
+    for line in monitor.stdout:
+        try:
+            message = json.loads(line)
+            if message.get("member") != "Notify":
+                continue
+            data = message["payload"]["data"]
+            app_name, replaces_id, hints = str(data[0]), int(data[1]), data[6]
+        except (ValueError, KeyError, IndexError, TypeError):
+            continue
+
+        desktop_entry = str(hint(hints, "desktop-entry") or "")
+        seen.record(app_name, desktop_entry)
+
+        cfg = config.get()
+        if not cfg.get("enabled", True):
+            continue
+        if replaces_id:  # an update to a notification that is already showing
+            continue
+        if hint(hints, "suppress-sound") is True:
+            continue
+
+        rule = find_sound(cfg, app_name, desktop_entry)
+        if not rule:
+            continue
+        if not cfg.get("play_during_dnd", True) and do_not_disturb_active():
+            continue
+
+        key = desktop_entry or app_name
+        now = time.monotonic()
+        if now - last_played.get(key, 0.0) < MIN_GAP_SECONDS:
+            continue
+        last_played[key] = now
+        play(rule["sound"], rule.get("volume", 1.0))
+
+    return monitor.wait()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
