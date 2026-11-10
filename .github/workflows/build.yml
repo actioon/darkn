@@ -79,13 +79,18 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
-      # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
-        id: rechunk
-        run: |
-          just ostree-rechunk \
-            ${IMAGE_NAME} \
-            ${DEFAULT_TAG}
+      # Rechunking (smaller update downloads) is switched off: it needs a
+      # second full copy of the ~15 GB image on disk, and the free GitHub
+      # runner runs out of space doing it. Updates therefore re-download
+      # Darkn's own layer (about 1 GB) each time. To turn it back on, restore
+      # the step below once the storage problem is solved.
+      #
+      # - name: Rechunk with rpm-ostree
+      #   id: rechunk
+      #   run: |
+      #     just ostree-rechunk \
+      #       ${IMAGE_NAME} \
+      #       ${DEFAULT_TAG}
 
       # If you are feeling adventurous, use the new distro agnostic rechunker
       # https://github.com/coreos/chunkah

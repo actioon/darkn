@@ -13,6 +13,15 @@ chmod 0755 /usr/libexec/darkn-installer /usr/bin/darkn-welcome /usr/libexec/dark
 ln -sf /usr/bin/darkn-welcome /usr/bin/darkn-setup
 ln -sf /usr/libexec/darkn-backup /usr/bin/darkn-backup
 
+# Warn, without failing the build, when fontconfig cannot see a font family.
+# Note the ":" before "family": without it fc-list treats the word as a
+# font name to search for and prints nothing.
+font_check() {
+    if ! fc-list : family | grep -F "$1" >/dev/null; then
+        echo "WARNING: font family not found: $1" >&2
+    fi
+}
+
 ### Programming languages and build tools
 # The base image (aurora-dx-nvidia-open) already ships VS Code, Docker,
 # git, gh, android-tools and the NVIDIA driver. This adds the toolchains.
@@ -99,11 +108,10 @@ rm -rf /tmp/gfonts
 install -D -m 0644 /etc/fonts/conf.d/56-darkn-arabic.conf /etc/skel/.config/fontconfig/conf.d/56-darkn-arabic.conf
 
 fc-cache -f
-fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null || echo "WARNING: font check failed: fc-list :lang=ar family | grep "Noto Sans Arabic" >/dev/null" | tr -d "\"" >&2
-fc-scan --format "%{family}
-" /usr/share/fonts/darkn-arabic/cairo/ || true
-fc-list : file | grep -c darkn-arabic || echo "WARNING: darkn-arabic fonts are not visible to fontconfig" >&2
-fc-match "Traditional Arabic" | grep -i "amiri" >/dev/null || echo "WARNING: font alias check failed" >&2
+font_check "Noto Sans Arabic"
+font_check "Cairo"
+font_check "Amiri"
+fc-match "Traditional Arabic" | grep -i "amiri" >/dev/null || echo "WARNING: the Traditional Arabic alias does not resolve to Amiri" >&2
 locale -a | grep -i '^ar_EG' >/dev/null
 
 ### Keyboard shortcuts and quick tools
@@ -126,7 +134,15 @@ HANDY_SHA256="2c77658d4939fbaeb82e168830d549b758d954e23e387a50017112dbc2735992"
 curl -fL --retry 3 -o /tmp/handy.rpm \
     "https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy-${HANDY_VERSION}-1.x86_64.rpm"
 echo "${HANDY_SHA256}  /tmp/handy.rpm" | sha256sum -c -
-dnf5 install -y --nogpgcheck /tmp/handy.rpm
+# Handy's own package is unsigned (its integrity is the checksum above), but
+# its dependencies come from Fedora and must keep their signature checks,
+# so install them first, then Handy on its own.
+dnf5 install -y webkit2gtk4.1 openblas gtk-layer-shell
+dnf5 install -y --nogpgcheck /tmp/handy.rpm 2>&1 | tee /tmp/handy-install.log
+if grep -E 'skipped OpenPGP checks.*(fedora|updates)' /tmp/handy-install.log; then
+    echo "Handy pulled unverified packages from Fedora repositories" >&2
+    exit 1
+fi
 command -v handy
 command -v kate
 
@@ -245,7 +261,8 @@ dnf5 install -y \
     open-sans-fonts \
     google-carlito-fonts \
     liberation-fonts-all \
-    google-noto-color-emoji-fonts
+    google-noto-color-emoji-fonts \
+    rsms-inter-vf-fonts
 
 # JetBrains Mono Nerd Font: the coding font with the icon glyphs that the
 # terminal prompt and file listings use. Pinned release and checksum.
@@ -257,15 +274,14 @@ echo "${NERD_FONTS_SHA256}  /tmp/JetBrainsMono.tar.xz" | sha256sum -c -
 install -d /usr/share/fonts/darkn-nerd-fonts
 tar -xJf /tmp/JetBrainsMono.tar.xz -C /usr/share/fonts/darkn-nerd-fonts --wildcards '*.ttf' 'OFL.txt'
 fc-cache -f
-fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null || echo "WARNING: font check failed: fc-list family | grep "JetBrainsMono Nerd Font" >/dev/null" | tr -d "\"" >&2
-fc-list family | grep "Inter" >/dev/null || echo "WARNING: font check failed: fc-list family | grep "Inter" >/dev/null" | tr -d "\"" >&2
+font_check "JetBrainsMono Nerd Font"
+font_check "Inter"
 
 ### Per-app notification sounds
 # darkn-notify-soundd plays the sound a user assigned to an app or a group
 # of apps; darkn-notification-sounds is its settings window (PyQt6).
 # The sound themes give a good set of sounds to choose from.
-dnf5 install -y python3-pyqt6 pipewire-utils ocean-sound-theme oxygen-sounds sound-theme-freedesktop \
-    rsms-inter-vf-fonts
+dnf5 install -y python3-pyqt6 pipewire-utils ocean-sound-theme oxygen-sounds sound-theme-freedesktop
 chmod 0755 /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
 systemctl --global enable darkn-notify-sound.service
 python3 -m py_compile /usr/libexec/darkn-notify-soundd /usr/bin/darkn-notification-sounds
@@ -329,3 +345,8 @@ command -v flatpak
 bash -n /usr/libexec/darkn-backup
 bash -n /usr/libexec/darkn-groups
 test -x /usr/libexec/ublue-brew-trust-brewfile
+
+### Clean up
+# Package manager leftovers do not belong in the image (bootc lint flags them).
+dnf5 clean all
+rm -rf /run/dnf /var/lib/dnf/repos
